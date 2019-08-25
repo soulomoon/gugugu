@@ -14,6 +14,9 @@ library:
 
     - array
     - bytestring
+    - containers
+    - directory
+    - filepath
     - mtl
     - text
 
