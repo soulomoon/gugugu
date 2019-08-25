@@ -1,0 +1,20 @@
+_hpack-common:  !include ../hpack-common.yaml
+<<:             *toplevel
+
+name:           gugugu-core
+
+library:
+  source-dirs: src
+  build-tools:
+    - alex:alex
+    - happy:happy
+
+  dependencies:
+    - base >= 4.12 && < 5
+
+    - array
+    - bytestring
+    - mtl
+    - text
+
+    - vector

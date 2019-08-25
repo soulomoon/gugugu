@@ -1,0 +1,21 @@
+# Common directories
+build/
+run/
+tmp/
+
+# Native objects
+*.o
+*.a
+
+# Haskell and Stack
+*.hi
+.stack-work/
+
+# Python
+*.pyc
+__pycache__/
+
+# IDE and editors
+.vscode/
+.idea/
+*.iml
