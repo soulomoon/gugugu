@@ -1,0 +1,35 @@
+plugins {
+  id "scala"
+}
+
+def scalaVersion = "2.12"
+
+repositories {
+  jcenter()
+}
+
+configurations {
+  scalaCompilerPlugin
+}
+
+dependencies {
+  implementation "org.scala-lang:scala-library:${scalaVersion}.8"
+
+  scalaCompilerPlugin "org.typelevel:kind-projector_${scalaVersion}:0.10.3"
+}
+
+sourceSets {
+  main {
+    scala {
+      srcDir "${projectDir}/build/generated/gugugu/main/scala"
+    }
+  }
+}
+
+compileScala {
+  scalaCompileOptions.deprecation = true
+  scalaCompileOptions.additionalParameters = [
+    "-Ypartial-unification",
+    "-feature",
+    "-Xplugin:" + configurations.scalaCompilerPlugin.asPath]
+}

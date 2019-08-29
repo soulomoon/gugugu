@@ -15,6 +15,10 @@ tmp/
 *.pyc
 __pycache__/
 
+# Java and Gradle
+*.class
+.gradle/
+
 # IDE and editors
 .vscode/
 .idea/

@@ -1,0 +1,20 @@
+_hpack-common:  !include ../hpack-common.yaml
+<<:             *toplevel
+
+name:           gugugu-utils
+
+library:
+  source-dirs: src
+
+  dependencies:
+    - base >= 4.12 && < 5
+
+    - directory
+    - filepath
+    - mtl
+    - text
+
+    - optparse-applicative
+    - ansi-wl-pprint
+
+    - casing

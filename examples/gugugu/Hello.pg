@@ -1,0 +1,8 @@
+module Hello where
+
+
+data FoldRequest
+  = FoldRequest
+    { values  :: List Int32
+    , initial :: Int32
+    }
