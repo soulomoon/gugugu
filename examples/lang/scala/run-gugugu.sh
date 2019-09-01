@@ -9,5 +9,6 @@ rm -rf $THIS_DIR/build/generated/gugugu
 gugugu-scala \
 	--input=$EXAMPLE_DIR/gugugu \
 	--output=$SRC_OUTPUT \
+	--with-codec \
 	--package-prefix=guguguexamples.definitions \
 	;

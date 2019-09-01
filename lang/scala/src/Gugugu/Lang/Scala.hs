@@ -33,6 +33,8 @@ import           Gugugu.Lang.Scala.SourceUtils
 data GuguguScalaOption
   = GuguguScalaOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
+    , runtimePkg       :: [Text]                  -- ^ Gugugu runtime package
+    , withCodec        :: Bool                    -- ^ True if generate codec
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -90,7 +92,7 @@ makeData :: GuguguK r m => Module -> Data -> m (FilePath, CompilationUnit)
 makeData md@Module{..} d@Data{..} = do
   GuguguScalaOption{..} <- asks toGuguguScalaOption
   dataCode <- mkTypeCode d
-  typeDef <- case dataConDef of
+  (typeDef, maybeObjWithoutCodec) <- case dataConDef of
     DRecord RecordCon{..} -> do
       params <- for recordConFields $ \rf@RecordField{..} -> do
         scalaType <- makeType recordFieldType
@@ -104,16 +106,138 @@ makeData md@Module{..} d@Data{..} = do
             , cdName      = dataCode
             , cdParams    = params
             }
-      pure (TSC classDef)
+      pure (TSC classDef, Nothing)
+
+  codecStats <- if withCodec then makeCodecStats d else pure []
 
   moduleCode <- mkModuleCode md
 
   let compilationUnit = CompilationUnit
         { cuPackage  = QualId moduleCode
-        , cuTopStats = [typeDef]
+        , cuTopStats = [typeDef] <> toList (fmap TSO mObjectDef)
         }
       path            = pkgDir moduleCode </> (T.unpack dataCode <> ".scala")
+      mObjectDef      = if null codecStats
+        then maybeObjWithoutCodec
+        else Just $ case maybeObjWithoutCodec of
+          Just od -> od{ odBody = odBody od <> codecStats }
+          Nothing -> ObjectDef
+            { odModifiers = []
+            , odName      = dataCode
+            , odBody      = codecStats
+            }
   pure (path, compilationUnit)
+
+makeCodecStats :: GuguguK r m => Data -> m [TemplateStat]
+makeCodecStats d@Data{..} = do
+  codecPkg <- asks guguguCodecPkg
+  dataCode <- mkTypeCode d
+  let eImpl         = eSimple "impl"
+      encoderTypeId = codecPkgId "Encoder"
+      decoderTypeId = codecPkgId "Decoder"
+      eS            = eSimple "s"
+      eA            = eSimple "a"
+      -- scala type of this type
+      tThis         = tSimple dataCode
+      codecPkgId n  = StableId $ codecPkg <> (n :| [])
+  (encodeFDef, decodeFDef) <- case dataConDef of
+    DRecord RecordCon{..} -> do
+      let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
+          eDecodeRecordField = eImpl `EMember` "decodeRecordField"
+          eEncoderObj        = ESimple encoderTypeId
+          eDecoderObj        = ESimple decoderTypeId
+          e_                 = eSimple "_"
+      codecComps <- for (indexed recordConFields) $ \(i, rf) -> do
+        t <- makeType $ recordFieldType rf
+        fieldCode <- mkFieldCode rf
+        fieldValue <- mkFieldValue rf
+        let encodeDef  = PatDef
+              { pdModifiers = []
+              , pdPattern   = PSimple sn
+              , pdType      = Nothing
+              , pdDef       = ECall eEncodeRecordField
+                  [ eSPrevious, eI, fieldValue
+                  , ECall (eTCall1 eEncoderObj t `EMember` "encode")
+                      [e_, eA `EMember` fieldCode, eImpl]
+                  ]
+              }
+            decodeDef  = PatDef
+              { pdModifiers = []
+              , pdPattern   = PTuple $ sn :| [vn]
+              , pdType      = Nothing
+              , pdDef       = ECall eDecodeRecordField
+                  [ eSPrevious, eI, fieldValue
+                  , ECall (eTCall1 eDecoderObj t `EMember` "decode")
+                      [e_, eImpl]
+                  ]
+              }
+            eN         = eSimple vn
+            eI         = eSimple $ showText i
+            eSPrevious = eSimple $ "s" <> showText (i + 1)
+            sn         = "s" <> showText (i + 2)
+            vn         = "v" <> showText i
+        pure (encodeDef, decodeDef, eN)
+      let (encodeDefs, decodeDefs, fieldNames) = unzip3 codecComps
+      let encodeFDef = ECall (eImpl `EMember` "encodeRecord")
+            [eS, eN, eAnon1 "s1" $ EBlock $ fmap BSP encodeDefs <> [BSE eSl]]
+          decodeFDef = ECall (eImpl `EMember` "decodeRecord")
+            [eS, eN, eAnon1 "s1" $ EBlock $ fmap BSP decodeDefs <> [BSE eR]]
+            where eR = eTuple2 eSl $ ECall (eSimple dataCode) fieldNames
+          eN         = eSimple $ showText nFields
+          -- last s
+          eSl        = eSimple $ "s" <> showText (nFields + 1)
+          nFields    = length recordConFields
+      pure (encodeFDef, decodeFDef)
+  let encoderDef = PatDef
+        { pdModifiers = [MImplicit]
+        , pdPattern   = PSimple $ "encode" <> dataCode
+        , pdType      = Just t
+        , pdDef       = ENew t $ Just [TMSF encodeDef]
+        }
+        where t = TParamed encoderTypeId [tThis]
+      decoderDef = PatDef
+        { pdModifiers = [MImplicit]
+        , pdPattern   = PSimple $ "decode" <> dataCode
+        , pdType      = Just t
+        , pdDef       = ENew t $ Just [TMSF decodeDef]
+        }
+        where t = TParamed decoderTypeId [tThis]
+      encodeDef  = FunDef
+        { fdSig = FunDcl
+            { fdModifiers = [MOverride]
+            , fdName      = "encode"
+            , fdTParams   = ["S", "R"]
+            , fdParams    = [pS, fp, pImpl "EncoderImpl"]
+            , fdRType     = tS
+            }
+        , fdDef = encodeFDef
+        }
+        where fp = Param
+                { pName = "a"
+                , pType = tThis
+                }
+      decodeDef  = FunDef
+        { fdSig = FunDcl
+            { fdModifiers = [MOverride]
+            , fdName      = "decode"
+            , fdTParams   = ["S", "R"]
+            , fdParams    = [pS, pImpl "DecoderImpl"]
+            , fdRType     = TTuple $ tS :| [tThis]
+            }
+        , fdDef = decodeFDef
+        }
+
+      pS         = Param
+        { pName = "s"
+        , pType = tS
+        }
+      pImpl bn   = Param
+        { pName = "impl"
+        , pType = TParamed (codecPkgId bn) [tS, tSimple "R"]
+        }
+      tS         = tSimple "S"
+
+  pure [TMSV encoderDef, TMSV decoderDef]
 
 
 makeType :: GuguguK r m => GType -> m Type
@@ -158,11 +282,35 @@ mkFieldCode :: GuguguK r m => RecordField -> m Text
 mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
   f recordFieldName
 
+mkFieldValue :: GuguguK r m => RecordField -> m Expr
+mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
+  eSimple $ unsafeQuote $ f recordFieldName
+
 
 -- Utilities
 
+guguguCodecPkg :: HasGuguguScalaOption r => r -> NonEmpty Text
+guguguCodecPkg r =
+  let GuguguScalaOption{..} = toGuguguScalaOption r
+  in NonEmpty.fromList $ runtimePkg <> ["codec"]
+
 iSimple :: Text -> StableId
 iSimple t = StableId $ t :| []
+
+eSimple :: Text -> Expr
+eSimple = ESimple . iSimple
+
+eAnon1 :: Text -> Expr -> Expr
+eAnon1 t = EAnon $ t :| []
+
+eTuple2 :: Expr -> Expr -> Expr
+eTuple2 t1 t2 = ETuple $ t1 :| [t2]
+
+eTCall1 :: Expr -> Type -> Expr
+eTCall1 expr t = ETCall expr $ t :| []
+
+tSimple :: Text -> Type
+tSimple t = TParamed (iSimple t) []
 
 withTransformer :: GuguguK r m
                 => (GuguguNameTransformers -> NameTransformer)

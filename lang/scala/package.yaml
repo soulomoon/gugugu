@@ -13,12 +13,16 @@ library:
     - gugugu-core
     - gugugu-utils
 
+    - bytestring
     - containers
+    - directory
     - filepath
     - mtl
     - text
 
     - optparse-applicative
+
+    - file-embed
 
 executables:
   gugugu-scala:

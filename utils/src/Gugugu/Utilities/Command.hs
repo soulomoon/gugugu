@@ -10,6 +10,8 @@ module Gugugu.Utilities.Command
   , splitOn'
   , GuguguCmdOption(..)
   , execParser'
+  , pWithCodec
+
   , GuguguNameTransformers(..)
   , guguguNameTransformers
   , nameTransformerOption
@@ -58,12 +60,20 @@ execParser' parser = liftIO $ execParser infoParser
     fullParser = cmdParser <**> helper <**> pHelpTransformer
     cmdParser  = mkCmdOptParser parser
 
+-- | Parser for whether generate codec
+pWithCodec :: Parser Bool
+pWithCodec = switch $ fold
+  [ long "with-codec"
+  , help "pass this flag to generate codecs, default to false"
+  ]
+
 
 data GuguguNameTransformers
   = GuguguNameTransformers
     { transModuleCode :: NameTransformer    -- ^ Module name code
     , transTypeCode   :: NameTransformer    -- ^ Type name code
     , transFieldCode  :: NameTransformer    -- ^ Field name code
+    , transFieldValue :: NameTransformer    -- ^ Field name value
     }
   deriving Show
 
@@ -87,10 +97,16 @@ guguguNameTransformers defaults = do
     , help "record field name transformer for code"
     , value $ transFieldCode defaults
     ]
+  transFieldValue' <- nameTransformerOption $ fold
+    [ long "trans-field-value"
+    , help "record field name transformer for value"
+    , value $ transFieldValue defaults
+    ]
   pure GuguguNameTransformers
     { transModuleCode = transModuleCode'
     , transTypeCode   = transTypeCode'
     , transFieldCode  = transFieldCode'
+    , transFieldValue = transFieldValue'
     }
 
 -- | Make Parser for 'NameTransformer'
