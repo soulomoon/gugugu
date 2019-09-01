@@ -15,6 +15,8 @@ configurations {
 dependencies {
   implementation "org.scala-lang:scala-library:${scalaVersion}.8"
 
+  implementation "io.circe:circe-core_${scalaVersion}:0.11.1"
+
   scalaCompilerPlugin "org.typelevel:kind-projector_${scalaVersion}:0.10.3"
 }
 
