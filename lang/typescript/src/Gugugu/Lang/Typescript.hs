@@ -33,6 +33,7 @@ import           Gugugu.Lang.Typescript.SourceUtils
 data GuguguTsOption
   = GuguguTsOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
+    , withCodec        :: Bool                    -- ^ True if generate codec
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -86,10 +87,22 @@ makeModule md@Module{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
   typeDecs <- traverse makeData moduleDatas
   tsModule <- mkTypescriptModule md
+  let importPrefix = if depth > 0
+        then T.intercalate "/" $ replicate depth ".."
+        else "."
+        where depth = length tsModule - 1
+  let imports' = []
   let moduleBody = ImplementationModule
-        { imBody = concat typeDecs
+        { imImports = imports
+        , imBody    = concat typeDecs
         }
       path       = tsModulePath tsModule <> ".ts"
+      imports    =
+          f withCodec guguguCodecAlias "codec"
+        $ imports'
+        where f cond alias m = if cond
+                then ((alias, importPrefix <> "/gugugu/" <> m) :)
+                else id
   pure (path, moduleBody)
 
 makeData :: GuguguK r m => Data -> m [ImplementationModuleElement]
@@ -117,9 +130,100 @@ makeData d@Data{..} = do
             }
       pure $ MEC classDec
 
-  let decs = [dec]
+  codecDefs <- if withCodec then makeCodecDefs d else pure []
+
+  let decs = if null codecDefs
+        then [dec]
+        else case dec of
+          MEC classDec ->
+            let newDec = classDec
+                  { cdBody = cdBody classDec <> fmap CEV codecDefs
+                  }
+            in [MEC newDec]
   pure decs
 
+makeCodecDefs :: GuguguK r m => Data -> m [MemberVariableDeclaration]
+makeCodecDefs d@Data{..} = do
+  dataCode <- mkTypeCode d
+  let eImpl           = ESimple "impl"
+      encoderTypeName = codecPkgId "Encoder"
+      decoderTypeName = codecPkgId "Decoder"
+      eS              = ESimple "s"
+      eA              = ESimple "a"
+      -- typescript type of this type
+      tThis           = tSimple dataCode
+      codecPkgId n    = NamespaceName $ guguguCodecAlias :| [n]
+  (encodeFDef, decodeFDef) <- case dataConDef of
+    DRecord RecordCon{..} -> do
+      let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
+          eDecodeRecordField = eImpl `EMember` "decodeRecordField"
+          eS0                = ESimple "s0"
+      codecComps <- for (indexed recordConFields) $ \(i, rf) -> do
+        (encoderExpr, decoderExpr) <- makeCodecExpr $ recordFieldType rf
+        fieldCode <- mkFieldCode rf
+        fieldValue <- mkFieldValue rf
+        let encodeDef  = LexicalDeclaration
+              { ldModifiers = []
+              , ldPattern   = PSimple sn
+              , ldDef       = ECall eEncodeRecordField []
+                  [ eSPrevious, eI, fieldValue
+                  , EArrow ArrowFunction
+                      { afParams = ["s0"]
+                      , afBody   = Left $ ECall encoderExpr []
+                          [eS0, eA `EMember` fieldCode, eImpl]
+                      }
+                  ]
+              }
+            decodeDef  = LexicalDeclaration
+              { ldModifiers = []
+              , ldPattern   = PArray [sn, vn]
+              , ldDef       = ECall eDecodeRecordField []
+                  [ eSPrevious, eI, fieldValue
+                  , EArrow ArrowFunction
+                      { afParams = ["s0"]
+                      , afBody   = Left $ ECall decoderExpr []
+                          [eS0, eImpl]
+                      }
+                  ]
+              }
+            eN         = ESimple vn
+            eI         = ESimple $ showText i
+            eSPrevious = ESimple $ "s" <> showText (i + 1)
+            sn         = "s" <> showText (i + 2)
+            vn         = "v" <> showText i
+        pure (SID encodeDef, SID decodeDef, eN)
+      let (encodeDefs, decodeDefs, fieldNames) = unzip3 codecComps
+      let encodeFDef = ECall (eImpl `EMember` "encodeRecord") []
+            [eS, eN, eArrow1 "s1" (Right $ encodeDefs <> [SIR eSl])]
+          decodeFDef = ECall (eImpl `EMember` "decodeRecord") []
+            [eS, eN, eArrow1 "s1" (Right $ decodeDefs <> [SIR eR])]
+            where eR = EArray [eSl, ENew (ESimple dataCode) fieldNames]
+          eN         = ESimple $ showText nFields
+          -- last s
+          eSl        = ESimple $ "s" <> showText (nFields + 1)
+          nFields    = length recordConFields
+      pure (encodeFDef, decodeFDef)
+  let encoderDef = MemberVariableDeclaration
+        { mvdModifiers = [MPublic, MStatic]
+        , mvdName      = "encode" <> dataCode
+        , mvdType      = TParamed encoderTypeName [tThis]
+        , mvdDef       = EArrow encodeDef
+        }
+      decoderDef = MemberVariableDeclaration
+        { mvdModifiers = [MPublic, MStatic]
+        , mvdName      = "decode" <> dataCode
+        , mvdType      = TParamed decoderTypeName [tThis]
+        , mvdDef       = EArrow decodeDef
+        }
+      encodeDef = ArrowFunction
+        { afParams = ["s", "a", "impl"]
+        , afBody   = Left encodeFDef
+        }
+      decodeDef = ArrowFunction
+        { afParams = ["s", "impl"]
+        , afBody   = Left decodeFDef
+        }
+  pure [encoderDef, decoderDef]
 
 makeType :: GuguguK r m => GType -> m Type
 makeType GApp{..} = do
@@ -130,6 +234,15 @@ makeType GApp{..} = do
     Left TMaybe -> case params of
       [p] -> pure $ TUnion $ tSimple "null" :| [p]
       _   -> throwError "Maybe type requires exactly one parameter"
+
+makeCodecExpr :: GuguguK r m => GType -> m (Expression, Expression)
+makeCodecExpr GApp{..} = do
+  codec@(encoderF, decoderF) <- resolveTypeCodec typeCon
+  params <- traverse makeCodecExpr typeParams
+  pure $ case params of
+    [] -> codec
+    _  -> let (encoderPs, decoderPs) = unzip params
+          in (ECall encoderF [] encoderPs, ECall decoderF [] decoderPs)
 
 
 resolveTsType :: GuguguK r m => Text -> m (Either TSpecial NamespaceName)
@@ -153,6 +266,19 @@ data TSpecial
   = TMaybe
   deriving Show
 
+resolveTypeCodec :: GuguguK r m => Text -> m (Expression, Expression)
+resolveTypeCodec t = do
+  rr <- resolveTypeCon t
+  case rr of
+    ResolutionError e -> throwError e
+    LocalType d       -> do
+      typeName <- mkTypeCode d
+      let f p = EMember (ESimple typeName) $ p <> typeName
+      pure (f "encode", f "decode")
+    Primitive _       ->
+      let f ct = ESimple guguguCodecAlias `EMember` ct `EMember` T.toLower t
+      in pure (f "Encoder", f "Decoder")
+
 tsModulePath :: NonEmpty Text -> FilePath
 tsModulePath (part1 :| parts) = foldl' (\z x -> z </> T.unpack x)
                                        (T.unpack part1)
@@ -175,11 +301,24 @@ mkFieldCode :: GuguguK r m => RecordField -> m Text
 mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
   f recordFieldName
 
+mkFieldValue :: GuguguK r m => RecordField -> m Expression
+mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
+  ESimple $ unsafeQuote $ f recordFieldName
+
 
 -- Utilities
 
+guguguCodecAlias :: Text
+guguguCodecAlias = "_gugugu_c"
+
 nSimple :: Text -> NamespaceName
 nSimple t = NamespaceName $ t :| []
+
+eArrow1 :: Text -> Either Expression FunctionBody -> Expression
+eArrow1 t body = EArrow ArrowFunction
+  { afParams = [t]
+  , afBody   = body
+  }
 
 tSimple :: Text -> Type
 tSimple t = TParamed (nSimple t) []

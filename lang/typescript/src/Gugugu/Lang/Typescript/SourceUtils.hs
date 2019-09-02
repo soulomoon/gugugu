@@ -25,6 +25,7 @@ module Gugugu.Lang.Typescript.SourceUtils
   , TypeArguments
   , Type(..)
   , NamespaceName(..)
+  , PropertyName
   , ParameterList
   , Parameter(..)
   , Modifier(..)
@@ -34,6 +35,20 @@ module Gugugu.Lang.Typescript.SourceUtils
   , IdentifierReference
   , BindingIdentifier
   , Identifier
+  , Expression(..)
+
+  -- * A.3 Statements
+  -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-statements
+  , StatementList
+  , StatementListItem(..)
+  , LexicalDeclaration(..)
+  , BindingPattern(..)
+
+  -- * A.4 Functions and Classes (function part) and A.4 Functions
+  -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-functions-and-classes
+  --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a4-functions
+  , ArrowFunction(..)
+  , FunctionBody
 
   -- * A.4 Functions and Classes (class part) and A.6 Classes (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-functions-and-classes
@@ -41,6 +56,7 @@ module Gugugu.Lang.Typescript.SourceUtils
   , ClassDeclaration(..)
   , ClassElement(..)
   , ConstructorDeclaration(..)
+  , MemberVariableDeclaration(..)
 
   -- * A.5 Scripts and Modules and A.9 Scripts and Modules (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-scripts-and-modules
@@ -187,6 +203,18 @@ newtype NamespaceName
   deriving Show
 
 {-|
+TypeScript:
+
+@
+PropertyName:
+        IdentifierName
+        StringLiteral
+        NumericLiteral
+@
+ -}
+type PropertyName = IdentifierName
+
+{-|
 Typescript:
 
 @
@@ -246,6 +274,7 @@ AccessibilityModifier:
  -}
 data Modifier
   = MExport
+  | MStatic
   | MPublic
   deriving Show
 
@@ -277,6 +306,254 @@ Identifier :
 @
  -}
 type Identifier = IdentifierName
+
+{-|
+@
+PrimaryExpression[Yield] :
+        this
+        IdentifierReference[?Yield]
+        Literal
+        ArrayLiteral[?Yield]
+        ObjectLiteral[?Yield]
+        FunctionExpression
+        ClassExpression[?Yield]
+        GeneratorExpression
+        RegularExpressionLiteral
+        TemplateLiteral[?Yield]
+        CoverParenthesizedExpressionAndArrowParameterList[?Yield]
+MemberExpression[Yield] :
+        PrimaryExpression[?Yield]
+        MemberExpression[?Yield] [ Expression[In, ?Yield] ]
+        MemberExpression[?Yield] . IdentifierName
+        MemberExpression[?Yield] TemplateLiteral[?Yield]
+        SuperProperty[?Yield]
+        MetaProperty
+        new MemberExpression[?Yield] Arguments[?Yield]
+CallExpression[Yield] :
+        MemberExpression[?Yield] Arguments[?Yield]
+        SuperCall[?Yield]
+        CallExpression[?Yield] Arguments[?Yield]
+        CallExpression[?Yield] [ Expression[In, ?Yield] ]
+        CallExpression[?Yield] . IdentifierName
+        CallExpression[?Yield] TemplateLiteral[?Yield]
+Arguments[Yield] :
+        ( )
+        ( ArgumentList[?Yield] )
+ArgumentList[Yield] :
+        AssignmentExpression[In, ?Yield]
+        ... AssignmentExpression[In, ?Yield]
+        ArgumentList[?Yield] , AssignmentExpression[In, ?Yield]
+        ArgumentList[?Yield] , ... AssignmentExpression[In, ?Yield]
+LeftHandSideExpression[Yield] :
+        NewExpression[?Yield]
+        CallExpression[?Yield]
+PostfixExpression[Yield] :
+        LeftHandSideExpression[?Yield]
+        LeftHandSideExpression[?Yield] [no LineTerminator here] ++
+        LeftHandSideExpression[?Yield] [no LineTerminator here] --
+UnaryExpression[Yield] :
+        PostfixExpression[?Yield]
+        delete UnaryExpression[?Yield]
+        void UnaryExpression[?Yield]
+        typeof UnaryExpression[?Yield]
+        ++ UnaryExpression[?Yield]
+        -- UnaryExpression[?Yield]
+        + UnaryExpression[?Yield]
+        - UnaryExpression[?Yield]
+        ~ UnaryExpression[?Yield]
+        ! UnaryExpression[?Yield]
+MultiplicativeExpression[Yield] :
+        UnaryExpression[?Yield]
+        MultiplicativeExpression[?Yield] MultiplicativeOperator UnaryExpression[?Yield]
+MultiplicativeOperator : one of
+        * / %
+AdditiveExpression[Yield] :
+        MultiplicativeExpression[?Yield]
+        AdditiveExpression[?Yield] + MultiplicativeExpression[?Yield]
+        AdditiveExpression[?Yield] - MultiplicativeExpression[?Yield]
+ShiftExpression[Yield] :
+        AdditiveExpression[?Yield]
+        ShiftExpression[?Yield] \<\< AdditiveExpression[?Yield]
+        ShiftExpression[?Yield] \>\> AdditiveExpression[?Yield]
+        ShiftExpression[?Yield] \>\>\> AdditiveExpression[?Yield]
+RelationalExpression[In, Yield] :
+        ShiftExpression[?Yield]
+        RelationalExpression[?In, ?Yield] \< ShiftExpression[?Yield]
+        RelationalExpression[?In, ?Yield] \> ShiftExpression[?Yield]
+        RelationalExpression[?In, ?Yield] \<= ShiftExpression[? Yield]
+        RelationalExpression[?In, ?Yield] \>= ShiftExpression[?Yield]
+        RelationalExpression[?In, ?Yield] instanceof ShiftExpression[?Yield]
+        [+In] RelationalExpression[In, ?Yield] in ShiftExpression[?Yield]
+EqualityExpression[In, Yield] :
+        RelationalExpression[?In, ?Yield]
+        EqualityExpression[?In, ?Yield] == RelationalExpression[?In, ?Yield]
+        EqualityExpression[?In, ?Yield] != RelationalExpression[?In, ?Yield]
+        EqualityExpression[?In, ?Yield] === RelationalExpression[?In, ?Yield]
+        EqualityExpression[?In, ?Yield] !== RelationalExpression[?In, ?Yield]
+BitwiseANDExpression[In, Yield] :
+        EqualityExpression[?In, ?Yield]
+        BitwiseANDExpression[?In, ?Yield] & EqualityExpression[?In, ?Yield]
+BitwiseXORExpression[In, Yield] :
+        BitwiseANDExpression[?In, ?Yield]
+        BitwiseXORExpression[?In, ?Yield] ^ BitwiseANDExpression[?In, ?Yield]
+BitwiseORExpression[In, Yield] :
+        BitwiseXORExpression[?In, ?Yield]
+        BitwiseORExpression[?In, ?Yield] | BitwiseXORExpression[?In, ?Yield]
+LogicalANDExpression[In, Yield] :
+        BitwiseORExpression[?In, ?Yield]
+        LogicalANDExpression[?In, ?Yield] && BitwiseORExpression[?In, ?Yield]
+LogicalORExpression[In, Yield] :
+        LogicalANDExpression[?In, ?Yield]
+        LogicalORExpression[?In, ?Yield] || LogicalANDExpression[?In, ?Yield]
+ConditionalExpression[In, Yield] :
+        LogicalORExpression[?In, ?Yield]
+        LogicalORExpression[?In,?Yield] ? AssignmentExpression[In, ?Yield] : AssignmentExpression[?In, ?Yield]
+AssignmentExpression[In, Yield] :
+        ConditionalExpression[?In, ?Yield]
+        [+Yield] YieldExpression[?In]
+        ArrowFunction[?In, ?Yield]
+        LeftHandSideExpression[?Yield] = AssignmentExpression[?In, ?Yield]
+        LeftHandSideExpression[?Yield] AssignmentOperator AssignmentExpression[?In, ?Yield]
+Expression[In, Yield] :
+        AssignmentExpression[?In, ?Yield]
+        Expression[?In, ?Yield] , AssignmentExpression[?In, ?Yield]
+@
+ -}
+data Expression
+  = ESimple IdentifierReference
+  | EMember Expression IdentifierName
+  | ECall Expression TypeArguments [Expression]
+  | EArrow ArrowFunction
+  | EArray [Expression]
+  | ENew Expression [Expression]
+  deriving Show
+
+
+-- * A.3 Statements
+
+{-|
+@
+StatementList[Yield, Return] :
+        StatementListItem[?Yield, ?Return]
+        StatementList[?Yield, ?Return] StatementListItem[?Yield, ?Return]
+@
+ -}
+type StatementList = [StatementListItem]
+
+{-|
+@
+Statement[Yield, Return] :
+        BlockStatement[?Yield, ?Return]
+        VariableStatement[?Yield]
+        EmptyStatement
+        ExpressionStatement[?Yield]
+        IfStatement[?Yield, ?Return]
+        BreakableStatement[?Yield, ?Return]
+        ContinueStatement[?Yield]
+        BreakStatement[?Yield]
+        [+Return] ReturnStatement[?Yield]
+        WithStatement[?Yield, ?Return]
+        LabelledStatement[?Yield, ?Return]
+        ThrowStatement[?Yield]
+        TryStatement[?Yield, ?Return]
+        DebuggerStatement
+Declaration[Yield] :
+        HoistableDeclaration[?Yield]
+        ClassDeclaration[?Yield]
+        LexicalDeclaration[In, ?Yield]
+StatementListItem[Yield, Return] :
+        Statement[?Yield, ?Return]
+        Declaration[?Yield]
+ReturnStatement[Yield] :
+        return ;
+        return [no LineTerminator here] Expression[In, ?Yield] ;
+@
+ -}
+data StatementListItem
+  = SIR Expression
+  | SID LexicalDeclaration
+  deriving Show
+
+{-|
+@
+LexicalDeclaration[In, Yield] :
+        LetOrConst BindingList[?In, ?Yield] ;
+LetOrConst :
+        let
+        const
+BindingList[In, Yield] :
+        LexicalBinding[?In, ?Yield]
+        BindingList[?In, ?Yield] , LexicalBinding[?In, ?Yield]
+LexicalBinding[In, Yield] :
+        BindingIdentifier[?Yield] Initializer[?In, ?Yield]opt
+        BindingPattern[?Yield] Initializer[?In, ?Yield]
+@
+ -}
+data LexicalDeclaration
+  = LexicalDeclaration
+    { ldModifiers :: [Modifier]
+    , ldPattern   :: BindingPattern
+    , ldDef       :: Expression
+    }
+  deriving Show
+
+{-|
+@
+BindingPattern[Yield] :
+        ObjectBindingPattern[?Yield]
+        ArrayBindingPattern[?Yield]
+ArrayBindingPattern[Yield] :
+        [ Elision opt BindingRestElement[?Yield]opt ]
+        [ BindingElementList[?Yield] ]
+        [ BindingElementList[?Yield] , Elision opt BindingRestElement[?Yield]opt ]
+BindingElementList[Yield] :
+        BindingElisionElement[?Yield]
+        BindingElementList[?Yield] , BindingElisionElement[?Yield]
+BindingElisionElement[Yield] :
+        Elision opt BindingElement[?Yield]
+BindingElement[Yield] :
+        SingleNameBinding[?Yield]
+        BindingPattern[?Yield] Initializer[In, ?Yield]opt
+SingleNameBinding[Yield] :
+        BindingIdentifier[?Yield] Initializer[In, ?Yield]opt
+@
+ -}
+data BindingPattern
+  = PSimple BindingIdentifier
+  | PArray [BindingIdentifier]
+  deriving Show
+
+
+-- * A.4 Functions and Classes (function part) and A.4 Functions
+
+{-|
+@
+ArrowFunction[In, Yield] :
+        ArrowParameters[?Yield] [no LineTerminator here] => ConciseBody[?In]
+ArrowParameters[Yield] :
+        BindingIdentifier[?Yield]
+        CoverParenthesizedExpressionAndArrowParameterList[?Yield]
+ConciseBody[In] :
+        [lookahead ≠ { ] AssignmentExpression[?In]
+        { FunctionBody }
+@
+ -}
+data ArrowFunction
+  = ArrowFunction
+    { afParams :: [BindingIdentifier]
+    , afBody   :: Either Expression FunctionBody
+    }
+  deriving Show
+
+{-|
+@
+FunctionBody[Yield] :
+        FunctionStatementList[?Yield]
+FunctionStatementList[Yield] :
+        StatementList[?Yield, Return]opt
+@
+ -}
+type FunctionBody = StatementList
 
 
 -- * A.4 Functions and Classes (class part) and A.6 Classes (TypeScript)
@@ -335,10 +612,15 @@ ClassElement: ( Modified )
         ConstructorDeclaration
         PropertyMemberDeclaration
         IndexMemberDeclaration
+PropertyMemberDeclaration:
+        MemberVariableDeclaration
+        MemberFunctionDeclaration
+        MemberAccessorDeclaration
 @
  -}
 data ClassElement
   = CEC ConstructorDeclaration
+  | CEV MemberVariableDeclaration
   deriving Show
 
 {-|
@@ -357,10 +639,52 @@ data ConstructorDeclaration
     }
   deriving Show
 
+{-|
+@
+Initializer[In, Yield] :
+        = AssignmentExpression[?In, ?Yield]
+@
+
+TypeScript
+
+@
+MemberVariableDeclaration:
+        AccessibilityModifier opt static opt PropertyName TypeAnnotation opt Initializer opt ;
+@
+ -}
+data MemberVariableDeclaration
+  = MemberVariableDeclaration
+    { mvdModifiers :: [Modifier]
+    , mvdName      :: PropertyName
+    , mvdType      :: Type
+    , mvdDef       :: Expression
+    }
+  deriving Show
+
 
 -- * A.5 Scripts and Modules and A.9 Scripts and Modules (TypeScript)
 
 {-|
+@
+ImportDeclaration :
+        import ImportClause FromClause ;
+        import ModuleSpecifier ;
+ImportClause :
+        ImportedDefaultBinding
+        NameSpaceImport
+        NamedImports
+        ImportedDefaultBinding , NameSpaceImport
+        ImportedDefaultBinding , NamedImports
+NameSpaceImport :
+        * as ImportedBinding
+ImportedBinding :
+        BindingIdentifier
+FromClause :
+        from ModuleSpecifier
+ModuleSpecifier :
+        StringLiteral
+@
+
 TypeScript
 
 @
@@ -379,7 +703,8 @@ ImplementationModuleElements:
  -}
 data ImplementationModule
   = ImplementationModule
-    { imBody :: [ImplementationModuleElement]
+    { imImports :: [(BindingIdentifier, Text)]
+    , imBody    :: [ImplementationModuleElement]
     }
   deriving Show
 
@@ -429,6 +754,12 @@ data ImplementationModuleElement
 
 -- Utilities
 
+writeParams :: (Foldable t, Monad m) => t Expression -> SrcCompT m ()
+writeParams es = do
+  writeText "("
+  forWithComma_ es writeSrcComp
+  writeText ")"
+
 writeModifiers :: (Foldable t, Monad m) => t Modifier -> SrcCompT m ()
 writeModifiers ms = for_ ms $ \m -> do
   writeSrcComp m
@@ -460,7 +791,77 @@ instance SrcComp Parameter where
 instance SrcComp Modifier where
   writeSrcComp v = case v of
     MExport -> writeText "export"
+    MStatic -> writeText "static"
     MPublic -> writeText "public"
+
+
+instance SrcComp Expression where
+  writeSrcComp v = case v of
+    ESimple n      -> writeText n
+    EMember this n -> do
+      writeSrcComp this
+      writeText "."
+      writeText n
+    ECall f ts as  -> do
+      writeSrcComp f
+      unless (null ts) $ do
+        writeText "<"
+        forWithComma_ ts writeSrcComp
+        writeText ">"
+      writeParams as
+    EArrow af      -> writeSrcComp af
+    EArray es      -> do
+      writeText "["
+      forWithComma_ es writeSrcComp
+      writeText "]"
+    ENew c as      -> do
+      writeText "new "
+      writeSrcComp c
+      writeParams as
+
+
+instance SrcComp StatementListItem where
+  writeSrcComp v = case v of
+    SIR e -> do
+      writeText "return "
+      writeSrcComp e
+      writeText ";"
+    SID c -> writeSrcComp c
+
+instance SrcComp LexicalDeclaration where
+  writeSrcComp LexicalDeclaration{..} = do
+    writeModifiers ldModifiers
+    writeText "const "
+    writeSrcComp ldPattern
+    writeText " = "
+    writeSrcComp ldDef
+    writeText ";"
+
+instance SrcComp BindingPattern where
+  writeSrcComp v = case v of
+    PSimple n -> writeText n
+    PArray ns -> do
+      writeText "["
+      forWithComma_ ns writeText
+      writeText "]"
+
+
+instance SrcComp ArrowFunction where
+  writeSrcComp ArrowFunction{..} = do
+    case afParams of
+      [p] -> writeText p
+      _   -> do
+        writeText "("
+        forWithComma_ afParams writeText
+        writeText ")"
+    writeText " => "
+    case afBody of
+      Left e   -> writeSrcComp e
+      Right ss -> do
+        writeText "{\n"
+        indentBy 2 $ traverse_ (withNewLine . writeSrcComp) ss
+        doIndent
+        writeText "}"
 
 
 instance SrcComp ClassDeclaration where
@@ -480,6 +881,7 @@ instance SrcComp ClassDeclaration where
 instance SrcComp ClassElement where
   writeSrcComp v = withNewLine $ case v of
     CEC c -> writeSrcComp c
+    CEV c -> writeSrcComp c
 
 instance SrcComp ConstructorDeclaration where
   writeSrcComp ConstructorDeclaration{..} = do
@@ -499,9 +901,27 @@ instance SrcComp ConstructorDeclaration where
           doIndent
     writeText ") { }"
 
+instance SrcComp MemberVariableDeclaration where
+  writeSrcComp MemberVariableDeclaration{..} = do
+    writeModifiers mvdModifiers
+    writeText mvdName
+    writeText ": "
+    writeSrcComp mvdType
+    writeText " = "
+    writeSrcComp mvdDef
+    writeText ";"
+
 
 instance SrcComp ImplementationModule where
   writeSrcComp ImplementationModule{..} = do
+    unless (null imImports) $ do
+      for_ imImports $ \(alias, path) -> withNewLine $ do
+        writeText "import * as "
+        writeText alias
+        writeText " from \""
+        writeText path
+        writeText "\";"
+      writeText "\n"
     forWith_ "\n" imBody writeSrcComp
 
 instance SrcComp ImplementationModuleElement where
