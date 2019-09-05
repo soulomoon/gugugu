@@ -30,6 +30,7 @@ import           Gugugu.Parser.Types
   "="                                   { TEq }
   ","                                   { TComma }
   "::"                                  { TDColon }
+  "->"                                  { TRArrow }
 
   conid                                 { TConId $$ }
   varid                                 { TVarId $$ }
@@ -62,6 +63,7 @@ body      : {- empty -}                 { [] }
 
 dec :: { Dec }
 dec       : dataDec                     { DData $1 }
+          | funcDec                     { DFunc $1 }
 
 
 dataDec :: { DataDec }
@@ -69,6 +71,17 @@ dataDec   : "data" conid
               "=" dataCon ";;"          { DataDec
                                           { dataDecName = $2
                                           , dataDecDef  = $4
+                                          }
+                                        }
+
+funcDec :: { FuncDec }
+funcDec   : varid
+              "::" typeExpr
+              "->" typeExpr
+              ";;"                      { FuncDec
+                                          { funcDecName     = $1
+                                          , funcDecDomain   = $3
+                                          , funcDecCodomain = $5
                                           }
                                         }
 

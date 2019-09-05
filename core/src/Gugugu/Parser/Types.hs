@@ -23,6 +23,7 @@ module Gugugu.Parser.Types
   , ModuleDec(..)
   , Dec(..)
   , DataDec(..)
+  , FuncDec(..)
   , DataCon(..)
   , RecordCon(..)
   , RecordField(..)
@@ -125,6 +126,7 @@ data Token
   | TEq                 -- ^ Symbol, equal sign @=@
   | TComma              -- ^ Symbol, comma @,@
   | TDColon             -- ^ Symbol, double colon @::@
+  | TRArrow             -- ^ Symbol, right arrow @->@
 
   | TConId Text         -- ^ Constructor identifier
   | TVarId Text         -- ^ Variable identifier
@@ -159,6 +161,7 @@ data ModuleDec
 -- | Declaration
 data Dec
   = DData DataDec
+  | DFunc FuncDec
   deriving Show
 
 
@@ -171,6 +174,19 @@ data DataDec
   = DataDec
     { dataDecName :: Text
     , dataDecDef  :: DataCon
+    }
+  deriving Show
+
+-- | Function declaration
+--
+-- @
+-- 'funcDecName' :: 'funcDecDomain' -> 'funcDecCodomain'
+-- @
+data FuncDec
+  = FuncDec
+    { funcDecName     :: Text
+    , funcDecDomain   :: TypeExpr
+    , funcDecCodomain :: TypeExpr
     }
   deriving Show
 

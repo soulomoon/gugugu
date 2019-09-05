@@ -11,6 +11,7 @@ module Gugugu.Resolver
     loadAllModules
   , Module(..)
   , Data(..)
+  , Func(..)
   , DataCon(..)
   , RecordCon(..)
   , RecordField(..)
@@ -57,6 +58,7 @@ data Module
   = Module
     { moduleName  :: Text
     , moduleDatas :: [Data]
+    , moduleFuncs :: [Func]
     }
   deriving Show
 
@@ -66,6 +68,15 @@ data Data
   = Data
     { dataName   :: Text
     , dataConDef :: DataCon
+    }
+  deriving Show
+
+-- | Function
+data Func
+  = Func
+    { funcName     :: Text
+    , funcDomain   :: GType
+    , funcCodomain :: GType
     }
   deriving Show
 
@@ -158,9 +169,13 @@ resolveModuleDec expected P.ModuleDec{..} = do
         P.DData dd : decs' -> do
           d <- resolveDataDec dd
           (\m@Module{..} -> m{ moduleDatas = d : moduleDatas }) <$> go decs'
+        P.DFunc fd : decs' -> do
+          f <- resolveFuncDec fd
+          (\m@Module{..} -> m{ moduleFuncs = f : moduleFuncs }) <$> go decs'
         []                 -> pure Module
           { moduleName  = moduleDecName
           , moduleDatas = []
+          , moduleFuncs = []
           }
   go moduleDecBody
 
@@ -172,6 +187,16 @@ resolveDataDec P.DataDec{..} = do
       Left "unmatched type name and data constructor name"
     _                                                    -> pure ()
   pure Data{ dataName = dataDecName, .. }
+
+resolveFuncDec :: P.FuncDec -> Either String Func
+resolveFuncDec P.FuncDec{..} = do
+  funcDomain <- resolveTypeExpr funcDecDomain
+  funcCodomain <- resolveTypeExpr funcDecCodomain
+  case funcCodomain of
+    GApp{ typeCon = "IO", typeParams = [_] } -> pure ()
+    _                                        ->
+      Left "Function codomain must be a type like IO a"
+  pure Func{ funcName = funcDecName, .. }
 
 resolveDataConDef :: P.DataCon -> Either String DataCon
 resolveDataConDef dc = case dc of

@@ -59,6 +59,7 @@ $white_no_nl+                           ;
   "="                                   { simple TEq }
   ","                                   { simple TComma }
   "::"                                  { simple TDColon }
+  "->"                                  { simple TRArrow }
 
   @upperident                           { simpleString TConId }
   @lowerident                           { simpleString TVarId }
