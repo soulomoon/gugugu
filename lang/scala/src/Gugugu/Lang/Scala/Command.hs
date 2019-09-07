@@ -48,6 +48,10 @@ guguguScalaMain = runExceptIO $ do
               B.hPut h content
     when (withCodec opts) $
       writeRuntimeFiles "codec" codecFiles
+    when (withClient opts || withServer opts) $ do
+      let transportFiles = transportCommonFiles
+            <> (if withServer opts then serverFiles else [])
+      writeRuntimeFiles "transport" transportFiles
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
 
@@ -68,12 +72,16 @@ optParser = do
     , metavar "RUNTIME_PACKAGE"
     , help "location of gugugu runtime package"
     ]
-  withCodec <- pWithCodec
+  ~(withCodec, withServer, withClient) <- pWithCodecServerClient
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
-    { transModuleCode = ToLower
-    , transTypeCode   = NoTransform
-    , transFieldCode  = NoTransform
-    , transFieldValue = ToSnake
+    { transModuleCode  = ToLower
+    , transModuleValue = ToSnake
+    , transModuleType  = NoTransform
+    , transFuncCode    = NoTransform
+    , transFuncValue   = ToSnake
+    , transTypeCode    = NoTransform
+    , transFieldCode   = NoTransform
+    , transFieldValue  = ToSnake
     }
   pure GuguguScalaOption
     { packagePrefix = splitOn' "." packagePrefix'
@@ -86,3 +94,9 @@ optParser = do
 
 codecFiles :: [(FilePath, ByteString)]
 codecFiles = $(embedDir "runtime/codec")
+
+transportCommonFiles :: [(FilePath, ByteString)]
+transportCommonFiles = $(embedDir "runtime/transport")
+
+serverFiles :: [(FilePath, ByteString)]
+serverFiles = $(embedDir "runtime/server")

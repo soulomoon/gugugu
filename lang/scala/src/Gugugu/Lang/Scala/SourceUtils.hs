@@ -14,6 +14,7 @@ module Gugugu.Lang.Scala.SourceUtils
 
   , ClassDef(..)
   , ObjectDef(..)
+  , TraitDef(..)
   , TemplateStat(..)
 
   , FunDcl(..)
@@ -54,8 +55,9 @@ TopStatSeq        ::=  TopStat {semi TopStat}
  -}
 data CompilationUnit
   = CompilationUnit
-    { cuPackage  :: QualId
-    , cuTopStats :: [TopStat]
+    { cuPackage    :: QualId
+    , cuPkgImports :: [(QualId, [Id])]
+    , cuTopStats   :: [TopStat]
     }
   deriving Show
 
@@ -74,6 +76,7 @@ TmplDef           ::=  [‘case’] ‘class’ ClassDef
 data TopStat
   = TSC ClassDef
   | TSO ObjectDef
+  | TST TraitDef
   deriving Show
 
 
@@ -117,6 +120,20 @@ data ObjectDef
 
 {-|
 @
+TraitDef          ::=  id [TypeParamClause] TraitTemplateOpt
+TraitTemplateOpt  ::=  ‘extends’ TraitTemplate | [[‘extends’] TemplateBody]
+@
+ -}
+data TraitDef
+  = TraitDef
+    { tdName    :: Id
+    , tdTParams :: [Text]
+    , tdBody    :: [TemplateStat]
+    }
+  deriving Show
+
+{-|
+@
 TemplateStat      ::=  Import
                     |  {Annotation [nl]} {Modifier} Def
                     |  {Annotation [nl]} {Modifier} Dcl
@@ -135,7 +152,8 @@ Dcl               ::=  ‘val’ ValDcl
 @
  -}
 data TemplateStat
-  = TMSV PatDef
+  = TMSD FunDcl
+  | TMSV PatDef
   | TMSF FunDef
   deriving Show
 
@@ -297,6 +315,10 @@ data Expr
   | ECall Expr [Expr]
   | ETCall Expr (NonEmpty Type)
   | ENew Type (Maybe [TemplateStat])
+  | EIf Expr Expr (Maybe Expr)
+  | EReturn Expr
+  | EBinary Expr Text Expr
+  | EMatch Expr [(Pattern, Expr)]
   deriving Show
 
 {-|
@@ -343,6 +365,7 @@ RefineStat        ::=  Dcl
 data Type
   = TParamed StableId [Type]
   | TTuple (NonEmpty Type)
+  | TFun [Type] Type
   deriving Show
 
 
@@ -431,6 +454,19 @@ instance SrcComp CompilationUnit where
     withNewLine $ do
       writeText "package "
       writeSrcComp cuPackage
+    unless (null cuPkgImports) $ writeText "\n"
+    for_ cuPkgImports $ \(pkgId, members) -> withNewLine $ do
+      writeText "import "
+      writeSrcComp pkgId
+      case members of
+        []     -> pure ()
+        [name] -> do
+          writeText "."
+          writeText name
+        _      -> do
+          writeText "{"
+          forWithComma_ members writeText
+          writeText "}"
     for_ cuTopStats $ \ts -> do
       writeText "\n"
       writeSrcComp ts
@@ -439,6 +475,7 @@ instance SrcComp TopStat where
   writeSrcComp v = withNewLine $ case v of
     TSC c -> writeSrcComp c
     TSO c -> writeSrcComp c
+    TST c -> writeSrcComp c
 
 
 instance SrcComp ClassDef where
@@ -473,10 +510,25 @@ instance SrcComp ObjectDef where
       doIndent
       writeText "}"
 
+instance SrcComp TraitDef where
+  writeSrcComp TraitDef{..} = do
+    writeText "trait "
+    writeText tdName
+    unless (null tdTParams) $ do
+      writeText "["
+      forWithComma_ tdTParams writeText
+      writeText "]"
+    unless (null tdBody) $ do
+      writeText " {\n"
+      indentBy 2 $ traverse_ writeSrcComp tdBody
+      doIndent
+      writeText "}"
+
 instance SrcComp TemplateStat where
   writeSrcComp v = withNewLine $ case v of
     TMSV c -> writeSrcComp c
     TMSF c -> writeSrcComp c
+    TMSD c -> writeSrcComp c
 
 
 instance SrcComp FunDcl where
@@ -534,16 +586,16 @@ instance SrcComp Pattern where
 
 instance SrcComp Expr where
   writeSrcComp v = case v of
-    ESimple n      -> writeSrcComp n
-    EMember e name -> do
+    ESimple n        -> writeSrcComp n
+    EMember e name   -> do
       writeSrcComp e
       writeText "."
       writeText name
-    ETuple es      -> do
+    ETuple es        -> do
       writeText "("
       forWithComma_ es writeSrcComp
       writeText ")"
-    EAnon ps e     -> do
+    EAnon ps e       -> do
       case ps of
         p :| [] -> writeText p
         _       -> do
@@ -552,20 +604,20 @@ instance SrcComp Expr where
           writeText ")"
       writeText " => "
       writeSrcComp e
-    EBlock bss     -> do
+    EBlock bss       -> do
       writeText "{\n"
       indentBy 2 $ traverse_ writeSrcComp bss
       doIndent
       writeText "}"
-    ECall e args   -> do
+    ECall e args     -> do
       writeSrcComp e
       writeText "("
       forWithComma_ args writeSrcComp
       writeText ")"
-    ETCall e ts    -> do
+    ETCall e ts      -> do
       writeSrcComp e
       writeTParams ts
-    ENew t body    -> do
+    ENew t body      -> do
       writeText "new "
       writeSrcComp t
       for_ body $ \tss -> case tss of
@@ -575,6 +627,35 @@ instance SrcComp Expr where
           indentBy 2 $ traverse_ writeSrcComp tss
           doIndent
           writeText "}"
+    EIf cond e1 e2   -> do
+      writeText "if ("
+      writeSrcComp cond
+      writeText ") "
+      writeSrcComp e1
+      for_ e2 $ \e -> do
+        writeText " else "
+        writeSrcComp e
+    EReturn e        -> do
+      writeText "return "
+      writeSrcComp e
+    EBinary e1 op e2 -> do
+      writeSrcComp e1
+      writeText " "
+      writeText op
+      writeText " "
+      writeSrcComp e2
+    EMatch e cases   -> do
+      writeSrcComp e
+      writeText " match {\n"
+      indentBy 2 $ for_ cases $ \(pat, expr) -> do
+        doIndent
+        writeText "case "
+        writeSrcComp pat
+        writeText " => "
+        writeSrcComp expr
+        writeText "\n"
+      doIndent
+      writeText "}"
 
 instance SrcComp BlockStat where
   writeSrcComp v = withNewLine $ case v of
@@ -591,6 +672,15 @@ instance SrcComp Type where
       writeText "("
       forWithComma_ ts writeSrcComp
       writeText ")"
+    TFun ps t2    -> do
+      case ps of
+        [p] -> writeSrcComp p
+        _   -> do
+          writeText "("
+          forWithComma_ ps writeSrcComp
+          writeText ")"
+      writeText " => "
+      writeSrcComp t2
 
 
 instance SrcComp Modifier where

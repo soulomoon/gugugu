@@ -55,10 +55,14 @@ optParser = do
     ]
   withCodec <- pWithCodec
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
-    { transModuleCode = ToLower
-    , transTypeCode   = NoTransform
-    , transFieldCode  = NoTransform
-    , transFieldValue = ToSnake
+    { transModuleCode  = ToLower
+    , transModuleValue = ToSnake
+    , transModuleType  = NoTransform
+    , transFuncCode    = NoTransform
+    , transFuncValue   = ToSnake
+    , transTypeCode    = NoTransform
+    , transFieldCode   = NoTransform
+    , transFieldValue  = ToSnake
     }
   pure GuguguTsOption
     { packagePrefix = splitOn' "/" packagePrefix'

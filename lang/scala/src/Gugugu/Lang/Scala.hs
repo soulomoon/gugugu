@@ -13,6 +13,7 @@ module Gugugu.Lang.Scala
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Data.Bifoldable
 import           Data.Foldable
 import           Data.List.NonEmpty            (NonEmpty (..))
 import qualified Data.List.NonEmpty            as NonEmpty
@@ -35,6 +36,8 @@ data GuguguScalaOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
     , runtimePkg       :: [Text]                  -- ^ Gugugu runtime package
     , withCodec        :: Bool                    -- ^ True if generate codec
+    , withServer       :: Bool                    -- ^ True if generate server
+    , withClient       :: Bool                    -- ^ True if generate client
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -85,8 +88,11 @@ makeModules opts modules = do
 
 makeModule :: GuguguK r m => Module -> m (Map FilePath CompilationUnit)
 makeModule md@Module{..} = do
+  GuguguScalaOption{..} <- asks toGuguguScalaOption
   pairs <- traverse (makeData md) moduleDatas
-  pure $ Map.fromList pairs
+  tPair <- if (withServer || withClient) && not (null moduleFuncs)
+    then Just <$> makeTransport md else pure Nothing
+  pure $ Map.fromList $ toList tPair <> pairs
 
 makeData :: GuguguK r m => Module -> Data -> m (FilePath, CompilationUnit)
 makeData md@Module{..} d@Data{..} = do
@@ -113,8 +119,9 @@ makeData md@Module{..} d@Data{..} = do
   moduleCode <- mkModuleCode md
 
   let compilationUnit = CompilationUnit
-        { cuPackage  = QualId moduleCode
-        , cuTopStats = [typeDef] <> toList (fmap TSO mObjectDef)
+        { cuPackage    = QualId moduleCode
+        , cuPkgImports = []
+        , cuTopStats   = [typeDef] <> toList (fmap TSO mObjectDef)
         }
       path            = pkgDir moduleCode </> (T.unpack dataCode <> ".scala")
       mObjectDef      = if null codecStats
@@ -239,6 +246,141 @@ makeCodecStats d@Data{..} = do
 
   pure [TMSV encoderDef, TMSV decoderDef]
 
+makeTransport :: GuguguK r m => Module -> m (FilePath, CompilationUnit)
+makeTransport md@Module{..} = do
+  GuguguScalaOption{..} <- asks toGuguguScalaOption
+  transportPkg <- asks guguguTransportPkg
+  codecPkg <- asks guguguCodecPkg
+  let eEncode             = ESimple (codecPkgId "Encoder") `EMember` "encode"
+      eDecode             = ESimple (codecPkgId "Decoder") `EMember` "decode"
+      qualNameId          = transportPkgId "QualName"
+      codecPkgId n        = StableId $ codecPkg <> (n :| [])
+      transportPkgId n    = StableId $ transportPkg <> (n :| [])
+      e_                  = eSimple "_"
+      eK                  = eSimple "k"
+      eImpl               = eSimple "impl"
+      eNamespace          = eSimple "namespace"
+      eFEncode (tS, tR) t = ECall (ETCall eEncode (tS :| [tR, t]))
+        [e_, eEncoderImpl]
+      eFDecode (tS, tR) t = ECall (ETCall eDecode (tS :| [tR, t]))
+        [e_, eDecoderImpl]
+      eEncoderImpl        = eSimple "encoderImpl"
+      eDecoderImpl        = eSimple "decoderImpl"
+      tSRA                = (tSimple "SA", tSimple "RA")
+      tSRB                = (tSimple "SB", tSimple "RB")
+
+  transportComps <- for moduleFuncs $ \fn@Func{..} -> do
+    fd <- makeType funcDomain
+    fcd <- case funcCodomain of
+      GApp{ typeCon = "IO", typeParams = [v] } -> makeType v
+      _                                        ->
+        throwError "Function codomain must be a type like IO a"
+    funcCode <- mkFuncCode fn
+    funcValue <- mkFuncValue fn
+    let traitFunc  = FunDcl
+          { fdModifiers = []
+          , fdName      = funcCode
+          , fdTParams   = []
+          , fdParams    = [Param{ pName = "fa", pType = inputType }]
+          , fdRType     = outputType
+          }
+        toPattern  = PSimple funcValue
+        toExpr     = ECall (eSimple "Some")
+          [ ECall (eTCall2 eK fd fcd)
+              [ e_
+              , eFDecode tSRA fd
+              , eFEncode tSRB fcd
+              , eImpl `EMember` funcCode
+              ]
+          ]
+        inputType  = tSimple1 "F" fd
+        outputType = tSimple1 "M" $ tSimple1 "G" fcd
+    pure (traitFunc, (toPattern, toExpr))
+  let (traitFuncs, toCases) = unzip transportComps
+  moduleCode <- mkModuleCode md
+  moduleValue <- mkModuleValue md
+  traitName <- mkModuleType md
+  let compilationUnit = CompilationUnit
+        { cuPackage    = QualId moduleCode
+        , cuPkgImports = [(QualId ("scala" :| ["language"]), ["higherKinds"])]
+        , cuTopStats   = [TST traitDef, TSO objectDef]
+        }
+      path            = pkgDir moduleCode </> (T.unpack traitName <> ".scala")
+      traitDef        = TraitDef
+        { tdName    = traitName
+        , tdTParams = ["F[_]", "G[_]", "M[_]"]
+        , tdBody    = fmap TMSD traitFuncs
+        }
+      objectDef       = ObjectDef
+        { odModifiers = []
+        , odName      = traitName
+        , odBody      = [TMSV nsDef]
+            <> [TMSF toTransport | withServer]
+        }
+      nsDef           = PatDef
+        { pdModifiers = []
+        , pdPattern   = PSimple "namespace"
+        , pdType      = Just $ tSimple1 "Vector" $ tSimple "String"
+        , pdDef       = moduleValue
+        }
+      toTransport     = FunDef
+        { fdSig = FunDcl
+            { fdModifiers = []
+            , fdName      = "toTransport"
+            , fdTParams   = ["F[_]", "G[_]", "M[_]", "RA", "RB", "SA", "SB"]
+            , fdParams    =
+                [ Param
+                    { pName = "impl"
+                    , pType = tThis
+                    }
+                , Param
+                    { pName = "decoderImpl"
+                    , pType = TParamed (codecPkgId "DecoderImpl") $ biList tSRA
+                    }
+                , Param
+                    { pName = "encoderImpl"
+                    , pType = TParamed (codecPkgId "EncoderImpl") $ biList tSRB
+                    }
+                ]
+            , fdRType     = tServerTransport
+            }
+        , fdDef = ENew tServerTransport $ Just [TMSF transportAsk]
+        }
+        where tServerTransport =
+                TParamed (transportPkgId "ServerTransport") tParams
+      transportAsk    = FunDef
+        { fdSig = FunDcl
+            { fdModifiers = [MOverride]
+            , fdName      = "ask"
+            , fdTParams   = []
+            , fdParams    =
+                [ Param
+                    { pName = "name"
+                    , pType = TParamed qualNameId [tSimple "String"]
+                    }
+                , Param
+                    { pName = "k"
+                    , pType =
+                        TParamed (transportPkgId "ServerCodecHandler") tParams
+                    }
+                ]
+            , fdRType     = tSimple1 "Option" $ TFun
+                [tSimple1 "F" $ tSimple "RA"]
+                (tSimple1 "M" $ tSimple1 "G" $ tSimple "RB")
+            }
+        , fdDef = EBlock
+            [ BSE $ EIf cond (EReturn (eSimple "None")) Nothing
+            , BSE $ EMatch (eSimple "name" `EMember` "name") $
+                toCases <> [(PSimple "_", eSimple "None")]
+            ]
+        }
+        where cond = EBinary (eSimple "name" `EMember` "namespace")
+                        "!=" eNamespace
+      tThis           = TParamed (iSimple traitName)
+        [tSimple "F", tSimple "G", tSimple "M"]
+      tParams         = fmap tSimple ["F", "G", "M", "RA", "RB"]
+  pure (path, compilationUnit)
+
 
 makeType :: GuguguK r m => GType -> m Type
 makeType GApp{..} = do
@@ -274,6 +416,22 @@ mkModuleCode Module{..} = do
   withTransformer transModuleCode $ \f ->
     NonEmpty.fromList $ packagePrefix <> [f moduleName]
 
+mkModuleValue :: GuguguK r m => Module -> m Expr
+mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->
+  ECall (eSimple "Vector") [eSimple $ unsafeQuote $ f moduleName]
+
+mkModuleType :: GuguguK r m => Module -> m Text
+mkModuleType Module{..} = withTransformer transModuleType $ \f ->
+  f $ moduleName <> "Module"
+
+mkFuncCode :: GuguguK r m => Func -> m Text
+mkFuncCode Func{..} = withTransformer transFuncCode $ \f ->
+  f funcName
+
+mkFuncValue :: GuguguK r m => Func -> m Text
+mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
+  unsafeQuote $ f funcName
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -294,6 +452,11 @@ guguguCodecPkg r =
   let GuguguScalaOption{..} = toGuguguScalaOption r
   in NonEmpty.fromList $ runtimePkg <> ["codec"]
 
+guguguTransportPkg :: HasGuguguScalaOption r => r -> NonEmpty Text
+guguguTransportPkg r =
+  let GuguguScalaOption{..} = toGuguguScalaOption r
+  in NonEmpty.fromList $ runtimePkg <> ["transport"]
+
 iSimple :: Text -> StableId
 iSimple t = StableId $ t :| []
 
@@ -309,8 +472,14 @@ eTuple2 t1 t2 = ETuple $ t1 :| [t2]
 eTCall1 :: Expr -> Type -> Expr
 eTCall1 expr t = ETCall expr $ t :| []
 
+eTCall2 :: Expr -> Type -> Type -> Expr
+eTCall2 expr t1 t2 = ETCall expr $ t1 :| [t2]
+
 tSimple :: Text -> Type
 tSimple t = TParamed (iSimple t) []
+
+tSimple1 :: Text -> Type -> Type
+tSimple1 t tp = TParamed (iSimple t) [tp]
 
 withTransformer :: GuguguK r m
                 => (GuguguNameTransformers -> NameTransformer)

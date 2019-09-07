@@ -10,6 +10,7 @@ module Gugugu.Utilities.Command
   , splitOn'
   , GuguguCmdOption(..)
   , execParser'
+  , pWithCodecServerClient
   , pWithCodec
 
   , GuguguNameTransformers(..)
@@ -60,6 +61,22 @@ execParser' parser = liftIO $ execParser infoParser
     fullParser = cmdParser <**> helper <**> pHelpTransformer
     cmdParser  = mkCmdOptParser parser
 
+-- | Parser for whether generate codec \/ server \/ client
+pWithCodecServerClient :: Parser (Bool, Bool, Bool)
+pWithCodecServerClient = do
+  withCodec <- pWithCodec
+  withServer <- switch $ fold
+    [ long "with-server"
+    , help
+      "pass this flag to generate server, default to false, implies with-codec"
+    ]
+  withClient <- switch $ fold
+    [ long "with-client"
+    , help
+      "pass this flag to generate client, default to false, implies with-codec"
+    ]
+  pure (withCodec || withServer || withClient, withServer, withClient)
+
 -- | Parser for whether generate codec
 pWithCodec :: Parser Bool
 pWithCodec = switch $ fold
@@ -70,10 +87,14 @@ pWithCodec = switch $ fold
 
 data GuguguNameTransformers
   = GuguguNameTransformers
-    { transModuleCode :: NameTransformer    -- ^ Module name code
-    , transTypeCode   :: NameTransformer    -- ^ Type name code
-    , transFieldCode  :: NameTransformer    -- ^ Field name code
-    , transFieldValue :: NameTransformer    -- ^ Field name value
+    { transModuleCode  :: NameTransformer    -- ^ Module name code
+    , transModuleValue :: NameTransformer    -- ^ Module name value
+    , transModuleType  :: NameTransformer    -- ^ Client/Server code
+    , transFuncCode    :: NameTransformer    -- ^ Function name code
+    , transFuncValue   :: NameTransformer    -- ^ Function name value
+    , transTypeCode    :: NameTransformer    -- ^ Type name code
+    , transFieldCode   :: NameTransformer    -- ^ Field name code
+    , transFieldValue  :: NameTransformer    -- ^ Field name value
     }
   deriving Show
 
@@ -86,6 +107,26 @@ guguguNameTransformers defaults = do
     [ long "trans-module-code"
     , help "module name transformer for code"
     , value $ transModuleCode defaults
+    ]
+  transModuleValue' <- nameTransformerOption $ fold
+    [ long "trans-module-value"
+    , help "module name transformer for value"
+    , value $ transModuleValue defaults
+    ]
+  transModuleType' <- nameTransformerOption $ fold
+    [ long "trans-module-type"
+    , help "module name transformer for type of client/server"
+    , value $ transModuleType defaults
+    ]
+  transFuncCode' <- nameTransformerOption $ fold
+    [ long "trans-func-code"
+    , help "function name transformer for code"
+    , value $ transFuncCode defaults
+    ]
+  transFuncValue' <- nameTransformerOption $ fold
+    [ long "trans-func-value"
+    , help "function name transformer for value"
+    , value $ transFuncValue defaults
     ]
   transTypeCode' <- nameTransformerOption $ fold
     [ long "trans-type-code"
@@ -103,10 +144,14 @@ guguguNameTransformers defaults = do
     , value $ transFieldValue defaults
     ]
   pure GuguguNameTransformers
-    { transModuleCode = transModuleCode'
-    , transTypeCode   = transTypeCode'
-    , transFieldCode  = transFieldCode'
-    , transFieldValue = transFieldValue'
+    { transModuleCode  = transModuleCode'
+    , transModuleValue = transModuleValue'
+    , transModuleType  = transModuleType'
+    , transFuncCode    = transFuncCode'
+    , transFuncValue   = transFuncValue'
+    , transTypeCode    = transTypeCode'
+    , transFieldCode   = transFieldCode'
+    , transFieldValue  = transFieldValue'
     }
 
 -- | Make Parser for 'NameTransformer'

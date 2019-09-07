@@ -6,3 +6,5 @@ data FoldRequest
     { values  :: List Int32
     , initial :: Int32
     }
+
+fold :: FoldRequest -> IO Int32
