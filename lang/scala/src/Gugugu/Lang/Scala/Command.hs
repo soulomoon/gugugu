@@ -51,6 +51,7 @@ guguguScalaMain = runExceptIO $ do
     when (withClient opts || withServer opts) $ do
       let transportFiles = transportCommonFiles
             <> (if withServer opts then serverFiles else [])
+            <> (if withClient opts then clientFiles else [])
       writeRuntimeFiles "transport" transportFiles
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
@@ -100,3 +101,6 @@ transportCommonFiles = $(embedDir "runtime/transport")
 
 serverFiles :: [(FilePath, ByteString)]
 serverFiles = $(embedDir "runtime/server")
+
+clientFiles :: [(FilePath, ByteString)]
+clientFiles = $(embedDir "runtime/client")

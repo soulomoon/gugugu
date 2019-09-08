@@ -260,12 +260,14 @@ makeTransport md@Module{..} = do
       eK                  = eSimple "k"
       eImpl               = eSimple "impl"
       eNamespace          = eSimple "namespace"
+      eTransportSend      = eSimple "transport" `EMember` "send"
       eFEncode (tS, tR) t = ECall (ETCall eEncode (tS :| [tR, t]))
         [e_, eEncoderImpl]
       eFDecode (tS, tR) t = ECall (ETCall eDecode (tS :| [tR, t]))
         [e_, eDecoderImpl]
       eEncoderImpl        = eSimple "encoderImpl"
       eDecoderImpl        = eSimple "decoderImpl"
+      eFa                 = eSimple "fa"
       tSRA                = (tSimple "SA", tSimple "RA")
       tSRB                = (tSimple "SB", tSimple "RB")
 
@@ -293,10 +295,19 @@ makeTransport md@Module{..} = do
               , eImpl `EMember` funcCode
               ]
           ]
+        fromDef    = FunDef
+          { fdSig = traitFunc
+          , fdDef = ECall (eTCall2 eTransportSend fd fcd)
+              [ ECall (ESimple qualNameId) [eNamespace, eSimple funcValue]
+              , eFa
+              , eFEncode tSRA fd
+              , eFDecode tSRB fcd
+              ]
+          }
         inputType  = tSimple1 "F" fd
         outputType = tSimple1 "M" $ tSimple1 "G" fcd
-    pure (traitFunc, (toPattern, toExpr))
-  let (traitFuncs, toCases) = unzip transportComps
+    pure (traitFunc, (toPattern, toExpr), fromDef)
+  let (traitFuncs, toCases, fromDefs) = unzip3 transportComps
   moduleCode <- mkModuleCode md
   moduleValue <- mkModuleValue md
   traitName <- mkModuleType md
@@ -316,6 +327,7 @@ makeTransport md@Module{..} = do
         , odName      = traitName
         , odBody      = [TMSV nsDef]
             <> [TMSF toTransport | withServer]
+            <> [TMSF fromTransport | withClient]
         }
       nsDef           = PatDef
         { pdModifiers = []
@@ -348,6 +360,30 @@ makeTransport md@Module{..} = do
         }
         where tServerTransport =
                 TParamed (transportPkgId "ServerTransport") tParams
+      fromTransport   = FunDef
+        { fdSig = FunDcl
+            { fdModifiers = []
+            , fdName      = "fromTransport"
+            , fdTParams   = ["F[_]", "G[_]", "M[_]", "RA", "RB", "SA", "SB"]
+            , fdParams    =
+                [ Param
+                    { pName = "transport"
+                    , pType =
+                        TParamed (transportPkgId "ClientTransport") tParams
+                    }
+                , Param
+                    { pName = "encoderImpl"
+                    , pType = TParamed (codecPkgId "EncoderImpl") $ biList tSRA
+                    }
+                , Param
+                    { pName = "decoderImpl"
+                    , pType = TParamed (codecPkgId "DecoderImpl") $ biList tSRB
+                    }
+                ]
+            , fdRType     = tThis
+            }
+        , fdDef = ENew tThis $ Just $ fmap TMSF fromDefs
+        }
       transportAsk    = FunDef
         { fdSig = FunDcl
             { fdModifiers = [MOverride]
