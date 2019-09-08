@@ -24,8 +24,10 @@ dependencies {
   implementation "io.circe:circe-core_${scalaVersion}:0.11.1"
 
   implementation "org.http4s:http4s-core_${scalaVersion}:${http4sVersion}"
+  implementation "org.http4s:http4s-client_${scalaVersion}:${http4sVersion}"
   implementation "org.http4s:http4s-server_${scalaVersion}:${http4sVersion}"
   implementation "org.http4s:http4s-circe_${scalaVersion}:${http4sVersion}"
+  implementation "org.http4s:http4s-blaze-client_${scalaVersion}:${http4sVersion}"
   implementation "org.http4s:http4s-blaze-server_${scalaVersion}:${http4sVersion}"
 
   implementation "io.chrisdavenport:log4cats-core_${scalaVersion}:${log4CatsVersion}"
@@ -56,6 +58,10 @@ compileScala {
 
 task runJsonHttpServer(type: JavaExec) {
   main = "guguguexamples.jsonhttp.server.JsonHttpServerMain"
+}
+
+task runJsonHttpClient(type: JavaExec) {
+  main = "guguguexamples.jsonhttp.client.JsonHttpClientMain"
 }
 
 
