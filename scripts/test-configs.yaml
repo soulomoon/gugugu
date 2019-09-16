@@ -1,0 +1,8 @@
+jsonhttp:
+  scala:
+    server:
+      command: gradle runJsonHttpServer
+      cwd: examples/lang/scala
+    client:
+      command: gradle runJsonHttpClient
+      cwd: examples/lang/scala
