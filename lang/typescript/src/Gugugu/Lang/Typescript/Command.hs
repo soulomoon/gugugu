@@ -41,6 +41,11 @@ guguguTypescriptMain = runExceptIO $ do
         runtimeDir = outputDir </> "gugugu"
     when (withCodec opts) $
       writeRuntimeFile "codec" codecFile
+    when (withServer opts || withClient opts) $ do
+      let transportFile = f withServer serverFile
+                        $ transportCommonFile
+          f p x z       = if p opts then x <> "\n" <> z else z
+      writeRuntimeFile "transport" transportFile
   for_ (Map.toList fs) $ \(p, mb) ->
     writeSrcCompToFile (outputDir </> p) mb
 
@@ -53,7 +58,7 @@ optParser = do
     , metavar "PACKAGE_PREFIX"
     , help "the package prefix, e.g. path/to/generated"
     ]
-  withCodec <- pWithCodec
+  ~(withCodec, withServer, withClient) <- pWithCodecServerClient
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
     { transModuleCode  = ToLower
     , transModuleValue = ToSnake
@@ -74,3 +79,9 @@ optParser = do
 
 codecFile :: ByteString
 codecFile = $(embedFile "runtime/codec.ts")
+
+transportCommonFile :: ByteString
+transportCommonFile = $(embedFile "runtime/transport.ts")
+
+serverFile :: ByteString
+serverFile = $(embedFile "runtime/server.ts")

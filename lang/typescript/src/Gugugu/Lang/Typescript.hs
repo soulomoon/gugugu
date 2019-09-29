@@ -34,6 +34,8 @@ data GuguguTsOption
   = GuguguTsOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
     , withCodec        :: Bool                    -- ^ True if generate codec
+    , withServer       :: Bool                    -- ^ True if generate server
+    , withClient       :: Bool                    -- ^ True if generate client
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -86,6 +88,9 @@ makeModule :: GuguguK r m => Module -> m (FilePath, ImplementationModule)
 makeModule md@Module{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
   typeDecs <- traverse makeData moduleDatas
+  transportElems <- if (withServer || withClient) && not (null moduleFuncs)
+    then makeTransport md
+    else pure []
   tsModule <- mkTypescriptModule md
   let importPrefix = if depth > 0
         then T.intercalate "/" $ replicate depth ".."
@@ -94,11 +99,12 @@ makeModule md@Module{..} = do
   let imports' = []
   let moduleBody = ImplementationModule
         { imImports = imports
-        , imBody    = concat typeDecs
+        , imBody    = concat typeDecs <> transportElems
         }
       path       = tsModulePath tsModule <> ".ts"
       imports    =
           f withCodec guguguCodecAlias "codec"
+        . f (withServer || withClient) guguguTransportAlias "transport"
         $ imports'
         where f cond alias m = if cond
                 then ((alias, importPrefix <> "/gugugu/" <> m) :)
@@ -117,11 +123,14 @@ makeData d@Data{..} = do
         pure Parameter
           { pModifiers = [MPublic]
           , pName      = fieldCode
+          , pOptional  = False
           , pType      = tsType
           }
       let classDec = ClassDeclaration
             { cdModifiers = [MExport]
             , cdName      = dataCode
+            , cdTParams   = []
+            , cdImpls     = []
             , cdBody      = [CEC classCon]
             }
           classCon = ConstructorDeclaration
@@ -140,6 +149,21 @@ makeData d@Data{..} = do
                   { cdBody = cdBody classDec <> fmap CEV codecDefs
                   }
             in [MEC newDec]
+          _                     ->
+            let codecClsDec = MEC ClassDeclaration
+                  { cdModifiers = []
+                  , cdName      = name
+                  , cdTParams   = []
+                  , cdImpls     = []
+                  , cdBody      = fmap CEV codecDefs
+                  }
+                aliasDec    = MED LexicalDeclaration
+                  { ldModifiers = [MExport]
+                  , ldPattern   = PSimple dataCode
+                  , ldDef       = ESimple name
+                  }
+                name        = "_" <> dataCode
+            in [dec, codecClsDec, aliasDec]
   pure decs
 
 makeCodecDefs :: GuguguK r m => Data -> m [MemberVariableDeclaration]
@@ -225,6 +249,204 @@ makeCodecDefs d@Data{..} = do
         }
   pure [encoderDef, decoderDef]
 
+makeTransport :: GuguguK r m => Module -> m [ImplementationModuleElement]
+makeTransport md@Module{..} = do
+  GuguguTsOption{..} <- asks toGuguguTsOption
+  let eEncode              = ESimple guguguCodecAlias
+        `EMember` "Encoder" `EMember` "encode"
+      eDecode              = ESimple guguguCodecAlias
+        `EMember` "Decoder" `EMember` "decode"
+      tI                   = tSimple "I"
+      tO                   = tSimple "O"
+      codecPkgId t         = NamespaceName $ guguguCodecAlias :| [t]
+      eNamespace           = ESimple "namespace"
+      transportPkgId t     = NamespaceName $ guguguTransportAlias :| [t]
+      eK                   = ESimple "k"
+      eImpl                = ESimple "impl"
+      eFEncode arg encoder = eArrow1 arg $ Left $ ECall eEncode []
+        [ESimple arg, eEncoderImpl, encoder]
+      eFDecode arg decoder = eArrow1 arg $ Left $ ECall eDecode []
+        [ESimple arg, eDecoderImpl, decoder]
+      eEncoderImpl         = ESimple "encoderImpl"
+      eDecoderImpl         = ESimple "decoderImpl"
+      tSRA                 = [tSimple "SA", tSimple "RA"]
+      tSRB                 = [tSimple "SB", tSimple "RB"]
+  transportComps <- for moduleFuncs $ \fn@Func{..} -> do
+    fd <- makeType funcDomain
+    funcCodomain1 <- case funcCodomain of
+      GApp{ typeCon = "IO", typeParams = [v] } -> pure v
+      _                                        ->
+        throwError "Function codomain must be a type like IO a"
+    fcd <- makeType funcCodomain1
+    (_, fdDecoder) <- makeCodecExpr funcDomain
+    (fcdEncoder, _) <- makeCodecExpr funcCodomain1
+    funcCode <- mkFuncCode fn
+    funcValue <- mkFuncValue fn
+    let serverFDec = iDec False
+        serverExpr = EArrow ArrowFunction
+          { afParams = ["fr"]
+          , afBody   = Left $ ECall eK [fd, fcd]
+              [ ESimple "fr"
+              , eFDecode "r" fdDecoder
+              , eFEncode "b1" fcdEncoder
+              , eArrow1 "fa" $ Left $ ECall
+                (eImpl `EMember` funcCode)
+                []
+                [eFa' `EMember` "data", eFa' `EMember` "meta"]
+              ]
+          }
+          where eFa' = ESimple "fa"
+        iDec x     = MethodSignature
+          { msName    = funcCode
+          , msTParams = []
+          , msParams  =
+              [ Parameter
+                  { pModifiers = []
+                  , pName      = "a"
+                  , pOptional  = False
+                  , pType      = fd
+                  }
+              , Parameter
+                  { pModifiers = []
+                  , pName      = "meta"
+                  , pOptional  = x
+                  , pType      = tI
+                  }
+              ]
+          , msRType   = TParamed (nSimple "Promise")
+              [ TParamed (transportPkgId "WithMeta") [tO, fcd]
+              ]
+          }
+    pure (serverFDec, (funcValue, [SIR serverExpr]))
+  let (serverFDecs, serverCases) = unzip transportComps
+  moduleValue <- mkModuleValue md
+  serverIName <- mkModuleType md "Server"
+  let serverDecs   = if withServer then serverDecs' else []
+        where serverDecs' = [serverIDec, serverCDec, lServer]
+      serverIDec   = MEI InterfaceDeclaration
+        { idModifiers = [MExport]
+        , idName      = serverIName
+        , idTParams   = iParams
+        , idMethods   = serverFDecs
+        }
+      serverCDec   = MEC ClassDeclaration
+        { cdModifiers = []
+        , cdName      = serverCName
+        , cdTParams   = []
+        , cdImpls     = []
+        , cdBody      =
+            [ CEM MemberFunctionDeclaration
+                { mfdModifiers = [MPublic, MStatic]
+                , mfdSig       = MethodSignature
+                    { msName    = "toTransport"
+                    , msTParams = fParams
+                    , msParams  =
+                        [ Parameter
+                            { pModifiers = []
+                            , pName      = "impl"
+                            , pOptional  = False
+                            , pType      = tServerI
+                            }
+                        , Parameter
+                            { pModifiers = []
+                            , pName      = "decoderImpl"
+                            , pOptional  = False
+                            , pType      = TParamed
+                                (codecPkgId "DecoderImpl") tSRA
+                            }
+                        , Parameter
+                            { pModifiers = []
+                            , pName      = "encoderImpl"
+                            , pOptional  = False
+                            , pType      = TParamed
+                                (codecPkgId "EncoderImpl") tSRB
+                            }
+                        ]
+                    , msRType   = TParamed
+                        (transportPkgId "ServerTransport")
+                        (fmap tSimple tParams)
+                    }
+                , mfdBody      = [SIR $ EObject [PDMethod askSig askBody]]
+                }
+            ]
+        }
+        where
+          askSig  = MethodSignature
+            { msName    = "ask"
+            , msTParams = []
+            , msParams  =
+                [ Parameter
+                    { pModifiers = []
+                    , pName      = "name"
+                    , pOptional  = False
+                    , pType      = TParamed (transportPkgId "QualName") []
+                    }
+                , Parameter
+                    { pModifiers = []
+                    , pName      = "k"
+                    , pOptional  = False
+                    , pType      = TParamed
+                        (transportPkgId "ServerCodecHandler")
+                        (fmap tSimple tParams)
+                    }
+                ]
+            , msRType   = TUnion $ tSimple "null" :|
+                [ TParen $ TFunc []
+                    [ Parameter
+                        { pModifiers = []
+                        , pName      = "fa"
+                        , pOptional  = False
+                        , pType      = TParamed
+                            (transportPkgId "WithMeta")
+                            [tI, tSimple "RA"]
+                        }
+                    ] $ TParamed (nSimple "Promise")
+                      [ TParamed (transportPkgId "WithMeta")
+                          [ TUnion $ tSimple "undefined" :| [tO]
+                          , tSimple "RB"
+                          ]
+                      ]
+                ]
+            }
+          askBody = [ SIf cond (SIR $ ESimple "null") Nothing
+                    , SSwitch (eName `EMember` "name") serverCases
+                    , SIR $ ESimple "null"
+                    ]
+          cond    = EBinary cLen "||" cVal
+          cLen    = eLen eNNs `eNeq` eLen eNamespace
+          cVal    = ECall
+            (eNNs `EMember` "some")
+            []
+            [ EArrow ArrowFunction
+                { afParams = ["v", "i"]
+                , afBody   = Left $
+                    (eNamespace `EIndex` ESimple "i") `eNeq` ESimple "v"
+                }
+            ]
+          eName   = ESimple "name"
+          eNNs    = eName `EMember` "namespace"
+          eLen e  = e `EMember` "length"
+      lServer      = MED LexicalDeclaration
+        { ldModifiers = [MExport]
+        , ldPattern   = PSimple serverIName
+        , ldDef       = ESimple serverCName
+        }
+      namespaceDec = MED LexicalDeclaration
+        { ldModifiers = [MExport]
+        , ldPattern   = PSimple "namespace"
+        , ldDef       = moduleValue
+        }
+
+      tServerI     = TParamed (nSimple serverIName) $ fmap tSimple iParams
+
+      serverCName  = "_" <> serverIName
+      iParams      = ["I", "O"]
+      tParams      = ["I", "O", "RA", "RB"]
+      fParams      = ["I", "O", "RA", "RB", "SA", "SB"]
+
+  pure $ serverDecs <> [namespaceDec]
+
+
 makeType :: GuguguK r m => GType -> m Type
 makeType GApp{..} = do
   tFirst <- resolveTsType typeCon
@@ -293,6 +515,22 @@ mkTypescriptModule Module{..} = do
   withTransformer transModuleCode $ \f ->
     NonEmpty.fromList $ packagePrefix <> [f moduleName]
 
+mkModuleValue :: GuguguK r m => Module -> m Expression
+mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->
+  EArray [ESimple $ unsafeQuote $ f moduleName]
+
+mkModuleType :: GuguguK r m => Module -> Text -> m Text
+mkModuleType Module{..} suffix = withTransformer transModuleType $ \f ->
+  f $ moduleName <> suffix
+
+mkFuncCode :: GuguguK r m => Func -> m Text
+mkFuncCode Func{..} = withTransformer transFuncCode $ \f ->
+  f funcName
+
+mkFuncValue :: GuguguK r m => Func -> m Expression
+mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
+  ESimple $ unsafeQuote $ f funcName
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -311,6 +549,9 @@ mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
 guguguCodecAlias :: Text
 guguguCodecAlias = "_gugugu_c"
 
+guguguTransportAlias :: Text
+guguguTransportAlias = "_gugugu_t"
+
 nSimple :: Text -> NamespaceName
 nSimple t = NamespaceName $ t :| []
 
@@ -319,6 +560,9 @@ eArrow1 t body = EArrow ArrowFunction
   { afParams = [t]
   , afBody   = body
   }
+
+eNeq :: Expression -> Expression -> Expression
+l `eNeq` r = EBinary l "!==" r
 
 tSimple :: Text -> Type
 tSimple t = TParamed (nSimple t) []

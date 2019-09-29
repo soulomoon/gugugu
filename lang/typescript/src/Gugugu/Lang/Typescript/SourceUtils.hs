@@ -29,12 +29,15 @@ module Gugugu.Lang.Typescript.SourceUtils
   , ParameterList
   , Parameter(..)
   , Modifier(..)
+  , MethodSignature(..)
 
-  -- * A.2 Expressions
+  -- * A.2 Expressions and A.2 Expressions (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-expressions
+  --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a2-expressions
   , IdentifierReference
   , BindingIdentifier
   , Identifier
+  , PropertyDefinition(..)
   , Expression(..)
 
   -- * A.3 Statements
@@ -44,19 +47,22 @@ module Gugugu.Lang.Typescript.SourceUtils
   , LexicalDeclaration(..)
   , BindingPattern(..)
 
-  -- * A.4 Functions and Classes (function part) and A.4 Functions
+  -- * A.4 Functions and Classes (function part) and A.4 Functions (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-functions-and-classes
   --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a4-functions
   , ArrowFunction(..)
   , FunctionBody
 
-  -- * A.4 Functions and Classes (class part) and A.6 Classes (TypeScript)
+  -- * A.4 Functions and Classes (class part) and A.5 Interfaces (TypeScript) and A.6 Classes (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-functions-and-classes
+  --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a5-interfaces
   --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a6-classes
+  , InterfaceDeclaration(..)
   , ClassDeclaration(..)
   , ClassElement(..)
   , ConstructorDeclaration(..)
   , MemberVariableDeclaration(..)
+  , MemberFunctionDeclaration(..)
 
   -- * A.5 Scripts and Modules and A.9 Scripts and Modules (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-scripts-and-modules
@@ -185,6 +191,8 @@ FunctionType:
 data Type
   = TParamed NamespaceName TypeArguments
   | TUnion (NonEmpty Type)
+  | TParen Type
+  | TFunc TypeParameters ParameterList Type
   deriving Show
 
 {-|
@@ -257,6 +265,7 @@ OptionalParameter:
 data Parameter
   = Parameter
     { pModifiers :: [Modifier]
+    , pOptional  :: Bool
     , pName      :: BindingIdentifier
     , pType      :: Type
     }
@@ -278,8 +287,27 @@ data Modifier
   | MPublic
   deriving Show
 
+{-|
+TypeScript
 
--- * A.2 Expressions
+@
+CallSignature:
+        TypeParameters opt ( ParameterList opt ) TypeAnnotation opt
+MethodSignature:
+        PropertyName ?opt CallSignature
+@
+ -}
+data MethodSignature
+  = MethodSignature
+    { msName    :: PropertyName
+    , msTParams :: TypeParameters
+    , msParams  :: [Parameter]
+    , msRType   :: Type
+    }
+  deriving Show
+
+
+-- * A.2 Expressions and A.2 Expressions (TypeScript)
 
 {-|
 @
@@ -309,6 +337,32 @@ type Identifier = IdentifierName
 
 {-|
 @
+PropertyDefinition[Yield] :
+        IdentifierReference[?Yield]
+        CoverInitializedName[?Yield]
+        PropertyName[?Yield] : AssignmentExpression[In, ?Yield]
+        MethodDefinition[?Yield]
+@
+
+TypeScript
+
+@
+PropertyDefinition: ( Modified )
+        IdentifierReference
+        CoverInitializedName
+        PropertyName : AssignmentExpression
+        PropertyName CallSignature { FunctionBody }
+        GetAccessor
+        SetAccessor
+@
+ -}
+data PropertyDefinition
+  = PDProperty PropertyName Expression
+  | PDMethod MethodSignature FunctionBody
+  deriving Show
+
+{-|
+@
 PrimaryExpression[Yield] :
         this
         IdentifierReference[?Yield]
@@ -321,6 +375,22 @@ PrimaryExpression[Yield] :
         RegularExpressionLiteral
         TemplateLiteral[?Yield]
         CoverParenthesizedExpressionAndArrowParameterList[?Yield]
+ArrayLiteral[Yield] :
+        [ Elision opt ]
+        [ ElementList[?Yield] ]
+        [ ElementList[?Yield] , Elisionopt ]
+ElementList[Yield] :
+        Elision opt AssignmentExpression[In, ?Yield]
+        Elision opt SpreadElement[?Yield]
+        ElementList[?Yield] , Elision opt AssignmentExpression[In, ?Yield]
+        ElementList[?Yield] , Elision opt SpreadElement[?Yield]
+ObjectLiteral[Yield] :
+        { }
+        { PropertyDefinitionList[?Yield] }
+        { PropertyDefinitionList[?Yield] , }
+PropertyDefinitionList[Yield] :
+        PropertyDefinition[?Yield]
+        PropertyDefinitionList[?Yield] , PropertyDefinition[?Yield]
 MemberExpression[Yield] :
         PrimaryExpression[?Yield]
         MemberExpression[?Yield] [ Expression[In, ?Yield] ]
@@ -418,6 +488,13 @@ Expression[In, Yield] :
         AssignmentExpression[?In, ?Yield]
         Expression[?In, ?Yield] , AssignmentExpression[?In, ?Yield]
 @
+
+TypeScript
+
+@
+Arguments: ( Modified )
+        TypeArguments opt ( ArgumentList opt )
+@
  -}
 data Expression
   = ESimple IdentifierReference
@@ -426,6 +503,9 @@ data Expression
   | EArrow ArrowFunction
   | EArray [Expression]
   | ENew Expression [Expression]
+  | EObject [PropertyDefinition]
+  | EBinary Expression Text Expression
+  | EIndex Expression Expression
   deriving Show
 
 
@@ -461,6 +541,19 @@ Declaration[Yield] :
         HoistableDeclaration[?Yield]
         ClassDeclaration[?Yield]
         LexicalDeclaration[In, ?Yield]
+BreakableStatement[Yield, Return] :
+        IterationStatement[?Yield, ?Return]
+        SwitchStatement[?Yield, ?Return]
+SwitchStatement[Yield, Return] :
+        switch ( Expression[In, ?Yield] ) CaseBlock[?Yield, ?Return]
+CaseBlock[Yield, Return] :
+        { CaseClauses[?Yield, ?Return]opt }
+        { CaseClauses[?Yield, ?Return]opt DefaultClause[?Yield, ?Return] CaseClauses[?Yield, ?Return]opt }
+CaseClauses[Yield, Return] :
+        CaseClause[?Yield, ?Return]
+        CaseClauses[?Yield, ?Return] CaseClause[?Yield, ?Return]
+CaseClause[Yield, Return] :
+        case Expression[In, ?Yield] : StatementList[?Yield, ?Return]opt
 StatementListItem[Yield, Return] :
         Statement[?Yield, ?Return]
         Declaration[?Yield]
@@ -472,6 +565,8 @@ ReturnStatement[Yield] :
 data StatementListItem
   = SIR Expression
   | SID LexicalDeclaration
+  | SIf Expression StatementListItem (Maybe StatementListItem)
+  | SSwitch Expression [(Expression, StatementList)]
   deriving Show
 
 {-|
@@ -556,7 +651,43 @@ FunctionStatementList[Yield] :
 type FunctionBody = StatementList
 
 
--- * A.4 Functions and Classes (class part) and A.6 Classes (TypeScript)
+-- * A.4 Functions and Classes (class part) and A.5 Interfaces (TypeScript) and A.6 Classes (TypeScript)
+
+{-|
+TypeScript
+
+@
+ObjectType:
+        { TypeBody opt }
+TypeBody:
+        TypeMemberList ;opt
+        TypeMemberList ,opt
+TypeMemberList:
+        TypeMember
+        TypeMemberList ; TypeMember
+        TypeMemberList , TypeMember
+TypeMember:
+        PropertySignature
+        CallSignature
+        ConstructSignature
+        IndexSignature
+        MethodSignature
+CallSignature:
+        TypeParameters opt ( ParameterList opt ) TypeAnnotation opt
+MethodSignature:
+        PropertyName ?opt CallSignature
+InterfaceDeclaration:
+        interface BindingIdentifier TypeParameters opt InterfaceExtendsClause opt ObjectType
+@
+ -}
+data InterfaceDeclaration
+  = InterfaceDeclaration
+    { idModifiers :: [Modifier]
+    , idName      :: BindingIdentifier
+    , idTParams   :: TypeParameters
+    , idMethods   :: [MethodSignature]
+    }
+  deriving Show
 
 {-|
 @
@@ -593,6 +724,8 @@ data ClassDeclaration
   = ClassDeclaration
     { cdModifiers :: [Modifier]
     , cdName      :: BindingIdentifier
+    , cdTParams   :: TypeParameters
+    , cdImpls     :: [Type]
     , cdBody      :: [ClassElement]
     }
   deriving Show
@@ -621,6 +754,7 @@ PropertyMemberDeclaration:
 data ClassElement
   = CEC ConstructorDeclaration
   | CEV MemberVariableDeclaration
+  | CEM MemberFunctionDeclaration
   deriving Show
 
 {-|
@@ -658,6 +792,28 @@ data MemberVariableDeclaration
     , mvdName      :: PropertyName
     , mvdType      :: Type
     , mvdDef       :: Expression
+    }
+  deriving Show
+
+{-|
+@
+Initializer[In, Yield] :
+        = AssignmentExpression[?In, ?Yield]
+@
+
+TypeScript
+
+@
+MemberFunctionDeclaration:
+        AccessibilityModifier opt static opt PropertyName CallSignature { FunctionBody }
+        AccessibilityModifier opt static opt PropertyName CallSignature ;
+@
+ -}
+data MemberFunctionDeclaration
+  = MemberFunctionDeclaration
+    { mfdModifiers :: [Modifier]
+    , mfdSig       :: MethodSignature
+    , mfdBody      :: FunctionBody
     }
   deriving Show
 
@@ -749,6 +905,8 @@ ExportImplementationElement:
  -}
 data ImplementationModuleElement
   = MEC ClassDeclaration
+  | MEI InterfaceDeclaration
+  | MED LexicalDeclaration
   deriving Show
 
 
@@ -770,13 +928,28 @@ writeModifiers ms = for_ ms $ \m -> do
 
 instance SrcComp Type where
   writeSrcComp v = case v of
-    TParamed t ps -> do
+    TParamed t ps   -> do
       writeSrcComp t
       unless (null ps) $ do
         writeText "<"
         forWithComma_ ps writeSrcComp
         writeText ">"
-    TUnion ts     -> forWith_ " | " ts writeSrcComp
+    TUnion ts       -> forWith_ " | " ts writeSrcComp
+    TParen t        -> do
+      writeText "("
+      writeSrcComp t
+      writeText ")"
+    TFunc tps ps rt -> do
+      case tps of
+        [] -> pure ()
+        _  -> do
+          writeText "<"
+          forWithComma_ tps writeText
+          writeText ">"
+      writeText "("
+      forWithComma_ ps writeSrcComp
+      writeText ") => "
+      writeSrcComp rt
 
 instance SrcComp NamespaceName where
   writeSrcComp n = writeText $ T.intercalate "." $ toList $ unNamespaceName n
@@ -785,6 +958,7 @@ instance SrcComp Parameter where
   writeSrcComp Parameter{..} = do
     writeModifiers pModifiers
     writeText pName
+    when pOptional $ writeText "?"
     writeText ": "
     writeSrcComp pType
 
@@ -794,39 +968,102 @@ instance SrcComp Modifier where
     MStatic -> writeText "static"
     MPublic -> writeText "public"
 
+instance SrcComp MethodSignature where
+  writeSrcComp MethodSignature{..} = do
+    writeText msName
+    unless (null msTParams) $ do
+      writeText "<"
+      forWithComma_ msTParams writeText
+      writeText ">"
+    writeText "("
+    forWithComma_ msParams writeSrcComp
+    writeText "): "
+    writeSrcComp msRType
+
+
+instance SrcComp PropertyDefinition where
+  writeSrcComp v = case v of
+    PDProperty n e    -> do
+      writeText n
+      writeText ": "
+      writeSrcComp e
+    PDMethod sig body -> do
+      writeSrcComp sig
+      writeText " {\n"
+      indentBy 2 $ traverse_ (withNewLine . writeSrcComp) body
+      doIndent
+      writeText "}"
 
 instance SrcComp Expression where
   writeSrcComp v = case v of
-    ESimple n      -> writeText n
-    EMember this n -> do
+    ESimple n        -> writeText n
+    EMember this n   -> do
       writeSrcComp this
       writeText "."
       writeText n
-    ECall f ts as  -> do
+    ECall f ts as    -> do
       writeSrcComp f
       unless (null ts) $ do
         writeText "<"
         forWithComma_ ts writeSrcComp
         writeText ">"
       writeParams as
-    EArrow af      -> writeSrcComp af
-    EArray es      -> do
+    EArrow af        -> writeSrcComp af
+    EArray es        -> do
       writeText "["
       forWithComma_ es writeSrcComp
       writeText "]"
-    ENew c as      -> do
+    ENew c as        -> do
       writeText "new "
       writeSrcComp c
       writeParams as
+    EObject ps       -> do
+      writeText "{\n"
+      indentBy 2 $ for_ ps $ \p -> withNewLine $ do
+        writeSrcComp p
+        writeText ","
+      doIndent
+      writeText "}"
+    EBinary e1 op e2 -> do
+      writeSrcComp e1
+      writeText " "
+      writeText op
+      writeText " "
+      writeSrcComp e2
+    EIndex e i       -> do
+      writeSrcComp e
+      writeText "["
+      writeSrcComp i
+      writeText "]"
 
 
 instance SrcComp StatementListItem where
   writeSrcComp v = case v of
-    SIR e -> do
+    SIR e           -> do
       writeText "return "
       writeSrcComp e
       writeText ";"
-    SID c -> writeSrcComp c
+    SID c           -> writeSrcComp c
+    SIf cond s1 s2  -> do
+      writeText "if ("
+      writeSrcComp cond
+      writeText ") "
+      writeSrcComp s1
+      for_ s2 $ \s -> do
+        writeText " else "
+        writeSrcComp s
+    SSwitch e cases -> do
+      writeText "switch ("
+      writeSrcComp e
+      writeText ") {\n"
+      indentBy 2 $ for_ cases $ \(e', ss) -> do
+        withNewLine $ do
+          writeText "case "
+          writeSrcComp e'
+          writeText ":"
+        indentBy 2 $ traverse_ (withNewLine . writeSrcComp) ss
+      doIndent
+      writeText "}"
 
 instance SrcComp LexicalDeclaration where
   writeSrcComp LexicalDeclaration{..} = do
@@ -864,11 +1101,37 @@ instance SrcComp ArrowFunction where
         writeText "}"
 
 
+instance SrcComp InterfaceDeclaration where
+  writeSrcComp InterfaceDeclaration{..} = do
+    writeModifiers idModifiers
+    writeText "interface "
+    writeText idName
+    unless (null idTParams) $ do
+      writeText "<"
+      forWithComma_ idTParams writeText
+      writeText ">"
+    writeText " {\n"
+    indentBy 2 $ for_ idMethods $ \ms -> do
+      doIndent
+      writeSrcComp ms
+      writeText ";\n"
+    doIndent
+    writeText "}"
+
 instance SrcComp ClassDeclaration where
   writeSrcComp ClassDeclaration{..} = do
     writeModifiers cdModifiers
     writeText "class "
     writeText cdName
+    case cdTParams of
+      [] -> pure ()
+      _  -> do
+        writeText "<"
+        forWithComma_ cdTParams writeText
+        writeText ">"
+    unless (null cdImpls) $ do
+      writeText " implements "
+      forWithComma_ cdImpls writeSrcComp
     writeText " {\n"
     indentBy 2 $ do
       for_ cdBody $ \ce -> do
@@ -882,6 +1145,7 @@ instance SrcComp ClassElement where
   writeSrcComp v = withNewLine $ case v of
     CEC c -> writeSrcComp c
     CEV c -> writeSrcComp c
+    CEM c -> writeSrcComp c
 
 instance SrcComp ConstructorDeclaration where
   writeSrcComp ConstructorDeclaration{..} = do
@@ -911,6 +1175,15 @@ instance SrcComp MemberVariableDeclaration where
     writeSrcComp mvdDef
     writeText ";"
 
+instance SrcComp MemberFunctionDeclaration where
+  writeSrcComp MemberFunctionDeclaration{..} = do
+    writeModifiers mfdModifiers
+    writeSrcComp mfdSig
+    writeText " {\n"
+    indentBy 2 $ traverse_ (withNewLine . writeSrcComp) mfdBody
+    doIndent
+    writeText "}"
+
 
 instance SrcComp ImplementationModule where
   writeSrcComp ImplementationModule{..} = do
@@ -926,4 +1199,6 @@ instance SrcComp ImplementationModule where
 
 instance SrcComp ImplementationModuleElement where
   writeSrcComp v = withNewLine $ case v of
-    MEC cd -> writeSrcComp cd
+    MEC cd  -> writeSrcComp cd
+    MEI id' -> writeSrcComp id'
+    MED ld  -> writeSrcComp ld

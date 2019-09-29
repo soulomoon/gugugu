@@ -10,5 +10,6 @@ gugugu-typescript \
 	--input=$EXAMPLE_DIR/gugugu \
 	--output=$SRC_OUTPUT \
 	--with-codec \
+	--with-server \
 	--package-prefix=guguguexamples/definitions \
 	;
