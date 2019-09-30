@@ -6,3 +6,7 @@ jsonhttp:
     client:
       command: gradle runJsonHttpClient
       cwd: examples/lang/scala
+  typescript:
+    server:
+      command: node build/js/src/jsonhttp/server.js
+      cwd: examples/lang/typescript
