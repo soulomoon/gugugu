@@ -42,7 +42,7 @@ guguguTypescriptMain = runExceptIO $ do
     when (withCodec opts) $
       writeRuntimeFile "codec" codecFile
     when (withServer opts || withClient opts) $ do
-      let transportFile = f withServer serverFile
+      let transportFile = f withServer serverFile . f withClient clientFile
                         $ transportCommonFile
           f p x z       = if p opts then x <> "\n" <> z else z
       writeRuntimeFile "transport" transportFile
@@ -85,3 +85,6 @@ transportCommonFile = $(embedFile "runtime/transport.ts")
 
 serverFile :: ByteString
 serverFile = $(embedFile "runtime/server.ts")
+
+clientFile :: ByteString
+clientFile = $(embedFile "runtime/client.ts")

@@ -14,6 +14,7 @@ module Gugugu.Lang.Typescript
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Foldable
+import           Data.List
 import           Data.List.NonEmpty                 (NonEmpty (..))
 import qualified Data.List.NonEmpty                 as NonEmpty
 import           Data.Map.Strict                    (Map)
@@ -263,6 +264,11 @@ makeTransport md@Module{..} = do
       transportPkgId t     = NamespaceName $ guguguTransportAlias :| [t]
       eK                   = ESimple "k"
       eImpl                = ESimple "impl"
+      eTransportSend       = ESimple "transport" `EMember` "send"
+      eFa                  = EObject
+        [ PDProperty "data" $ ESimple "a"
+        , PDProperty "meta" $ ESimple "meta"
+        ]
       eFEncode arg encoder = eArrow1 arg $ Left $ ECall eEncode []
         [ESimple arg, eEncoderImpl, encoder]
       eFDecode arg decoder = eArrow1 arg $ Left $ ECall eDecode []
@@ -278,11 +284,12 @@ makeTransport md@Module{..} = do
       _                                        ->
         throwError "Function codomain must be a type like IO a"
     fcd <- makeType funcCodomain1
-    (_, fdDecoder) <- makeCodecExpr funcDomain
-    (fcdEncoder, _) <- makeCodecExpr funcCodomain1
+    (fdEncoder, fdDecoder) <- makeCodecExpr funcDomain
+    (fcdEncoder, fcdDecoder) <- makeCodecExpr funcCodomain1
     funcCode <- mkFuncCode fn
     funcValue <- mkFuncValue fn
     let serverFDec = iDec False
+        clientFDec = iDec True
         serverExpr = EArrow ArrowFunction
           { afParams = ["fr"]
           , afBody   = Left $ ECall eK [fd, fcd]
@@ -296,6 +303,17 @@ makeTransport md@Module{..} = do
               ]
           }
           where eFa' = ESimple "fa"
+        clientFDef = PDMethod clientFDec
+          [ SIR $ ECall eTransportSend []
+              [ EObject
+                  [ PDProperty "namespace" eNamespace
+                  , PDProperty "name" funcValue
+                  ]
+              , eFa
+              , eFEncode "a1" fdEncoder
+              , eFDecode "r" fcdDecoder
+              ]
+          ]
         iDec x     = MethodSignature
           { msName    = funcCode
           , msTParams = []
@@ -317,17 +335,27 @@ makeTransport md@Module{..} = do
               [ TParamed (transportPkgId "WithMeta") [tO, fcd]
               ]
           }
-    pure (serverFDec, (funcValue, [SIR serverExpr]))
-  let (serverFDecs, serverCases) = unzip transportComps
+    pure (serverFDec, (funcValue, [SIR serverExpr]), clientFDec, clientFDef)
+  let (serverFDecs, serverCases, clientFDecs, clientFDefs) =
+        unzip4 transportComps
   moduleValue <- mkModuleValue md
   serverIName <- mkModuleType md "Server"
+  clientIName <- mkModuleType md "Client"
   let serverDecs   = if withServer then serverDecs' else []
         where serverDecs' = [serverIDec, serverCDec, lServer]
+      clientDecs   = if withClient then clientDecs' else []
+        where clientDecs' = [clientIDec, clientCDec, lClient]
       serverIDec   = MEI InterfaceDeclaration
         { idModifiers = [MExport]
         , idName      = serverIName
         , idTParams   = iParams
         , idMethods   = serverFDecs
+        }
+      clientIDec   = MEI InterfaceDeclaration
+        { idModifiers = [MExport]
+        , idName      = clientIName
+        , idTParams   = iParams
+        , idMethods   = clientFDecs
         }
       serverCDec   = MEC ClassDeclaration
         { cdModifiers = []
@@ -426,10 +454,56 @@ makeTransport md@Module{..} = do
           eName   = ESimple "name"
           eNNs    = eName `EMember` "namespace"
           eLen e  = e `EMember` "length"
+      clientCDec   = MEC ClassDeclaration
+        { cdModifiers = []
+        , cdName      = clientCName
+        , cdTParams   = []
+        , cdImpls     = []
+        , cdBody      =
+            [ CEM MemberFunctionDeclaration
+                { mfdModifiers = [MPublic, MStatic]
+                , mfdSig       = MethodSignature
+                    { msName    = "fromTransport"
+                    , msTParams = fParams
+                    , msParams  =
+                        [ Parameter
+                            { pModifiers = []
+                            , pName      = "transport"
+                            , pOptional  = False
+                            , pType      = TParamed
+                                (transportPkgId "ClientTransport")
+                                (fmap tSimple tParams)
+                            }
+                        , Parameter
+                            { pModifiers = []
+                            , pName      = "encoderImpl"
+                            , pOptional  = False
+                            , pType      = TParamed
+                                (codecPkgId "EncoderImpl") tSRA
+                            }
+                        , Parameter
+                            { pModifiers = []
+                            , pName      = "decoderImpl"
+                            , pOptional  = False
+                            , pType      = TParamed
+                                (codecPkgId "DecoderImpl") tSRB
+                            }
+                        ]
+                    , msRType   = tClientI
+                    }
+                , mfdBody      = [SIR $ EObject clientFDefs]
+                }
+            ]
+        }
       lServer      = MED LexicalDeclaration
         { ldModifiers = [MExport]
         , ldPattern   = PSimple serverIName
         , ldDef       = ESimple serverCName
+        }
+      lClient      = MED LexicalDeclaration
+        { ldModifiers = [MExport]
+        , ldPattern   = PSimple clientIName
+        , ldDef       = ESimple clientCName
         }
       namespaceDec = MED LexicalDeclaration
         { ldModifiers = [MExport]
@@ -438,13 +512,15 @@ makeTransport md@Module{..} = do
         }
 
       tServerI     = TParamed (nSimple serverIName) $ fmap tSimple iParams
+      tClientI     = TParamed (nSimple clientIName) $ fmap tSimple iParams
 
       serverCName  = "_" <> serverIName
+      clientCName  = "_" <> clientIName
       iParams      = ["I", "O"]
       tParams      = ["I", "O", "RA", "RB"]
       fParams      = ["I", "O", "RA", "RB", "SA", "SB"]
 
-  pure $ serverDecs <> [namespaceDec]
+  pure $ serverDecs <> clientDecs <> [namespaceDec]
 
 
 makeType :: GuguguK r m => GType -> m Type
