@@ -10,3 +10,6 @@ jsonhttp:
     server:
       command: node build/js/src/jsonhttp/server.js
       cwd: examples/lang/typescript
+    client:
+      command: node build/js/src/jsonhttp/client.js
+      cwd: examples/lang/typescript
