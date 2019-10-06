@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     values: [1, 3, 4],
     initial: 2,
   }, client.fold);
+  await doRequest(10, client.calculateFibs);
 }
 
 

@@ -430,6 +430,10 @@ resolveScalaType t = do
   case rr of
     ResolutionError e -> throwError e
     LocalType d       -> iSimple <$> mkTypeCode d
+    Imported md d     -> do
+      pkg <- mkModuleCode md
+      typeName <- mkTypeCode d
+      pure $ StableId $ pkg <> (typeName :| [])
     Primitive pt      -> pure $ iSimple $ case pt of
       PUnit   -> "Unit"
       PBool   -> "Boolean"

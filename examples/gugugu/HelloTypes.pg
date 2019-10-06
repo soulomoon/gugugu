@@ -1,0 +1,8 @@
+module HelloTypes where
+
+
+data AssociatedListEntry
+  = AssociatedListEntry
+    { index :: Int32
+    , value :: Int32
+    }

@@ -4,6 +4,7 @@ import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import guguguexamples.codec.JsonCodecImpl
 import guguguexamples.definitions.hello._
+import guguguexamples.definitions.hellotypes._
 import guguguexamples.jsonhttp._
 import guguguexamples.utils.EnvConfig
 import io.chrisdavenport.log4cats.Logger
@@ -26,6 +27,7 @@ object JsonHttpClientMain {
         _ <- doRequest {
           FoldRequest(values = Vector(1, 3, 4), initial = 2)
         }(hello.fold)
+        _ <- doRequest(10)(hello.calculateFibs)
       } yield ()
     }
   }

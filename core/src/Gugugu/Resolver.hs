@@ -5,6 +5,7 @@ Resolve the AST
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
+{-# LANGUAGE TupleSections     #-}
 module Gugugu.Resolver
   (
   -- * Load modules
@@ -33,6 +34,7 @@ import           Data.List.NonEmpty   (NonEmpty (..))
 import qualified Data.List.NonEmpty   as NonEmpty
 import           Data.Map.Strict      (Map)
 import qualified Data.Map.Strict      as Map
+import           Data.Semigroup
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Data.Traversable
@@ -50,15 +52,21 @@ loadAllModules path = do
   mds <- for srcs $ \(p, expected) -> do
     modDec <- P.parseModule p
     liftEither $ resolveModuleDec expected modDec
+  let moduleNames = fmap moduleName mds
+  for_ mds $ \Module{..} -> for_ moduleImports $ \importedName ->
+    if importedName `elem` moduleNames
+      then pure ()
+      else throwError $ "cannot resolve module: " <> T.unpack importedName
   pure mds
 
 
 -- | Module
 data Module
   = Module
-    { moduleName  :: Text
-    , moduleDatas :: [Data]
-    , moduleFuncs :: [Func]
+    { moduleName    :: Text
+    , moduleImports :: [Text]
+    , moduleDatas   :: [Data]
+    , moduleFuncs   :: [Func]
     }
   deriving Show
 
@@ -117,10 +125,14 @@ resolveTypeCon :: (HasResolutionContext r, MonadReader r m)
                => Text -> m ResolutionResult
 resolveTypeCon name = do
   rc <- asks toResolutionContext
-  let result = case lookupLocal rc name of
+  let result   = case lookupLocal rc name of
         Just v  -> LocalType v
-        Nothing -> prim
-      prim   = case lookupPrimitives name of
+        Nothing -> imported
+      imported = case lookupImported rc name of
+        Left e               -> ResolutionError e
+        Right (Just (md, d)) -> Imported md d
+        Right Nothing        -> prim
+      prim     = case lookupPrimitives name of
         Just v  -> Primitive v
         Nothing -> notFound
       notFound = ResolutionError $ "cannot resolve type: " <> T.unpack name
@@ -138,6 +150,7 @@ data ResolutionContext
 data ResolutionResult
   = ResolutionError String
   | LocalType Data
+  | Imported Module Data
   | Primitive PrimitiveType
   deriving Show
 
@@ -173,9 +186,10 @@ resolveModuleDec expected P.ModuleDec{..} = do
           f <- resolveFuncDec fd
           (\m@Module{..} -> m{ moduleFuncs = f : moduleFuncs }) <$> go decs'
         []                 -> pure Module
-          { moduleName  = moduleDecName
-          , moduleDatas = []
-          , moduleFuncs = []
+          { moduleName    = moduleDecName
+          , moduleImports = fmap P.importStmtModuleName moduleDecImports
+          , moduleDatas   = []
+          , moduleFuncs   = []
           }
   go moduleDecBody
 
@@ -244,6 +258,16 @@ findSrcs' prefix path = do
 
 lookupLocal :: ResolutionContext -> Text -> Maybe Data
 lookupLocal ResolutionContext{ rcCurrentModule = md } = lookupModule md
+
+lookupImported :: ResolutionContext
+               -> Text
+               -> Either String (Maybe (Module, Data))
+lookupImported ResolutionContext{ rcCurrentModule = Module{..} , .. } name = do
+  rs <- for moduleImports $ \iModuleName ->
+    case Map.lookup iModuleName rcModules of
+      Just md -> pure $ (md,) <$> lookupModule md name
+      Nothing -> Left $ "cannot resolve module: " <> T.unpack iModuleName
+  pure . fmap getLast . getOption $ foldMap (Option . fmap Last) rs
 
 lookupModule :: Module -> Text -> Maybe Data
 lookupModule Module{..} name = find ((== name) . dataName) moduleDatas

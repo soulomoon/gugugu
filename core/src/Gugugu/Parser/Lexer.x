@@ -54,6 +54,7 @@ $white_no_nl+                           ;
 
   "module"                              { simple TModule }
   "where"                               { simple TWhere }
+  "import"                              { simple TImport }
   "data"                                { simple TData }
 
   "="                                   { simple TEq }

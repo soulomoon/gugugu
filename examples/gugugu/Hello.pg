@@ -1,5 +1,7 @@
 module Hello where
 
+import HelloTypes
+
 
 data FoldRequest
   = FoldRequest
@@ -8,3 +10,10 @@ data FoldRequest
     }
 
 fold :: FoldRequest -> IO Int32
+
+data AssociatedList
+  = AssociatedList
+    { entries :: List AssociatedListEntry
+    }
+
+calculateFibs :: Int32 -> IO AssociatedList

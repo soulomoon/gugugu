@@ -3,6 +3,7 @@ package guguguexamples.jsonhttp.server.impl
 import cats.effect.{IO, Timer}
 import cats.implicits._
 import guguguexamples.definitions.hello._
+import guguguexamples.definitions.hellotypes._
 import guguguexamples.jsonhttp.WithMeta
 import guguguexamples.jsonhttp.server.HandlerF
 import guguguexamples.utils.ContT
@@ -23,6 +24,23 @@ class HelloImpl(implicit timer: Timer[IO])
           req.values.foldLeft(req.initial)(_ + _)
         }
       }
+    }
+  }
+
+  override def calculateFibs(fa: WithMeta[Int]): HandlerF[WithMeta[AssociatedList]] = {
+    withMeta(fa) { n =>
+      ContT.lift { IO.pure {
+        val rv = Vector.newBuilder[AssociatedListEntry]
+        var a = 0
+        var b = 1
+        (0 until n).foreach { i =>
+          val next = a + b
+          rv += AssociatedListEntry(index = i, value = b)
+          a = b
+          b = next
+        }
+        AssociatedList(rv.result())
+      }}
     }
   }
 

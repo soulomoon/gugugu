@@ -23,6 +23,7 @@ import           Data.Text                          (Text)
 import qualified Data.Text                          as T
 import           Data.Traversable
 import           System.FilePath
+import           Text.Printf
 
 import           Gugugu.Resolver
 import           Gugugu.Utilities
@@ -88,6 +89,7 @@ makeModules opts modules = do
 makeModule :: GuguguK r m => Module -> m (FilePath, ImplementationModule)
 makeModule md@Module{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
+  moduleMap <- asks $ rcModules . toResolutionContext
   typeDecs <- traverse makeData moduleDatas
   transportElems <- if (withServer || withClient) && not (null moduleFuncs)
     then makeTransport md
@@ -97,7 +99,15 @@ makeModule md@Module{..} = do
         then T.intercalate "/" $ replicate depth ".."
         else "."
         where depth = length tsModule - 1
-  let imports' = []
+  imports' <- for moduleImports $ \name -> do
+    importedMd <- case Map.lookup name moduleMap of
+      Just v  -> pure v
+      Nothing -> throwError $ printf "cannot resolve module: %s" name
+    importedMdName <- mkTypescriptModule importedMd
+    importAlias <- mkGuguguImportAlias importedMd
+    let importPath  = importPrefix <> "/"
+                   <> T.intercalate "/" (toList importedMdName)
+    pure (importAlias, importPath)
   let moduleBody = ImplementationModule
         { imImports = imports
         , imBody    = concat typeDecs <> transportElems
@@ -551,6 +561,10 @@ resolveTsType t = do
     LocalType d       -> do
       typeName <- mkTypeCode d
       pure . Right $ nSimple typeName
+    Imported md d     -> do
+      typeName <- mkTypeCode d
+      importAlias <- mkGuguguImportAlias md
+      pure . Right . NamespaceName $ importAlias :| [typeName]
     Primitive pt      -> case pt of
       PUnit   -> pure . Right $ nSimple "{}"
       PBool   -> pure . Right $ nSimple "boolean"
@@ -572,6 +586,12 @@ resolveTypeCodec t = do
     LocalType d       -> do
       typeName <- mkTypeCode d
       let f p = EMember (ESimple typeName) $ p <> typeName
+      pure (f "encode", f "decode")
+    Imported md d     -> do
+      typeName <- mkTypeCode d
+      importedAlias <- mkGuguguImportAlias md
+      let namespaced = ESimple importedAlias `EMember` typeName
+          f p        = EMember namespaced $ p <> typeName
       pure (f "encode", f "decode")
     Primitive _       ->
       let f ct = ESimple guguguCodecAlias `EMember` ct `EMember` T.toLower t
@@ -627,6 +647,9 @@ guguguCodecAlias = "_gugugu_c"
 
 guguguTransportAlias :: Text
 guguguTransportAlias = "_gugugu_t"
+
+mkGuguguImportAlias :: GuguguK r m => Module -> m Text
+mkGuguguImportAlias Module{..} = pure $ "_gugugu_i_" <> moduleName
 
 nSimple :: Text -> NamespaceName
 nSimple t = NamespaceName $ t :| []

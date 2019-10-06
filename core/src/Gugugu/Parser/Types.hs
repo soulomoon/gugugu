@@ -21,6 +21,7 @@ module Gugugu.Parser.Types
 
   -- * AST Nodes
   , ModuleDec(..)
+  , ImportStmt(..)
   , Dec(..)
   , DataDec(..)
   , FuncDec(..)
@@ -121,6 +122,7 @@ data Token
   = TEOF                -- ^ EOF
   | TModule             -- ^ Keyword @module@
   | TWhere              -- ^ Keyword @where@
+  | TImport             -- ^ Keyword @import@
   | TData               -- ^ Keyword @data@
 
   | TEq                 -- ^ Symbol, equal sign @=@
@@ -153,8 +155,15 @@ data Token
 -- @
 data ModuleDec
   = ModuleDec
-    { moduleDecName :: Text
-    , moduleDecBody :: [Dec]
+    { moduleDecName    :: Text
+    , moduleDecImports :: [ImportStmt]
+    , moduleDecBody    :: [Dec]
+    }
+  deriving Show
+
+newtype ImportStmt
+  = ImportStmt
+    { importStmtModuleName :: Text
     }
   deriving Show
 

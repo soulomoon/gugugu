@@ -11,7 +11,11 @@ import {
 import {
   FoldRequest,
   HelloServer,
+  AssociatedList,
 } from "../../build/generated/gugugu/guguguexamples/definitions/hello";
+import {
+  AssociatedListEntry,
+} from "../../build/generated/gugugu/guguguexamples/definitions/hellotypes";
 import {
   JsonCodecImpl,
   JsonRepr,
@@ -117,6 +121,26 @@ class HelloServerImpl implements HelloServer<Metadata, Metadata> {
   public fold(a: FoldRequest, meta: Metadata): Promise<WithMeta<Metadata, number>> {
     return this.withMeta(a, meta, async req => {
       return req.values.reduce((b, c) => b + c, req.initial);
+    });
+  }
+
+  public calculateFibs(a: number, meta: Metadata): Promise<WithMeta<Metadata, AssociatedList>> {
+    return this.withMeta(a, meta, async n => {
+      const rv: Array<AssociatedListEntry> = [];
+      let a = 0;
+      let b = 1;
+      for (let i = 0; i < n; i++) {
+        const next = a + b;
+        rv.push({
+          index: i,
+          value: b,
+        });
+        a = b;
+        b = next;
+      }
+      return {
+        entries: rv,
+      };
     });
   }
 

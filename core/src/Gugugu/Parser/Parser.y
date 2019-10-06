@@ -25,6 +25,7 @@ import           Gugugu.Parser.Types
 %token
   "module"                              { TModule }
   "where"                               { TWhere }
+  "import"                              { TImport }
   "data"                                { TData }
 
   "="                                   { TEq }
@@ -50,10 +51,22 @@ import           Gugugu.Parser.Types
 moduleDec :: { ModuleDec }
 moduleDec : "module" conid "where"
               "{{"
+                imports
                 body
               vClose                    { ModuleDec
-                                          { moduleDecName = $2
-                                          , moduleDecBody = $5
+                                          { moduleDecName    = $2
+                                          , moduleDecImports = $5
+                                          , moduleDecBody    = $6
+                                          }
+                                        }
+
+imports :: { [ImportStmt] }
+imports   : {- empty -}                 { [] }
+          | imports importStmt          { $1 ++ [ $2 ] }
+
+importStmt :: { ImportStmt }
+importStmt: "import" conid ";;"         { ImportStmt
+                                          { importStmtModuleName = $2
                                           }
                                         }
 
