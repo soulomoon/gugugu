@@ -149,6 +149,7 @@ makeData d@Data{..} = do
             , ccdParams    = params
             }
       pure $ MEC classDec
+    DEnum _               -> throwError "Enum type not supported yet"
 
   codecDefs <- if withCodec then makeCodecDefs d else pure []
 
@@ -238,6 +239,7 @@ makeCodecDefs d@Data{..} = do
           eSl        = ESimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
+    DEnum _               -> throwError "Enum type not supported yet"
   let encoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
         , mvdName      = "encode" <> dataCode

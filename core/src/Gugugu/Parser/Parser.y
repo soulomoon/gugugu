@@ -8,6 +8,7 @@ module Gugugu.Parser.Parser
 import           Control.Monad
 import           Control.Monad.Except
 import           Data.List
+import           Data.List.NonEmpty   (NonEmpty(..))
 import           Data.Text            (Text)
 
 import           Gugugu.Parser.Lexer
@@ -29,6 +30,7 @@ import           Gugugu.Parser.Types
   "data"                                { TData }
 
   "="                                   { TEq }
+  "|"                                   { TVBar }
   ","                                   { TComma }
   "::"                                  { TDColon }
   "->"                                  { TRArrow }
@@ -100,7 +102,12 @@ funcDec   : varid
 
 dataCon :: { DataCon }
 dataCon   : recordCon                   { DRecord $1 }
+          | enumCons                    { DEnum $1 }
 
+
+enumCons :: { NonEmpty Text }
+enumCons  : conid                       { $1 :| [] }
+          | enumCons "|" conid          { $1 <> ( $3 :| [] )  }
 
 recordCon :: { RecordCon }
 recordCon

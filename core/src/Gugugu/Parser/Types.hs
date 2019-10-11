@@ -126,6 +126,7 @@ data Token
   | TData               -- ^ Keyword @data@
 
   | TEq                 -- ^ Symbol, equal sign @=@
+  | TVBar               -- ^ Symbol, vertical bar @|@
   | TComma              -- ^ Symbol, comma @,@
   | TDColon             -- ^ Symbol, double colon @::@
   | TRArrow             -- ^ Symbol, right arrow @->@
@@ -202,6 +203,7 @@ data FuncDec
 -- | Data constructor
 data DataCon
   = DRecord RecordCon
+  | DEnum (NonEmpty Text)
   deriving Show
 
 

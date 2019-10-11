@@ -113,6 +113,7 @@ makeData md@Module{..} d@Data{..} = do
             , cdParams    = params
             }
       pure (TSC classDef, Nothing)
+    DEnum _               -> throwError "Enum type not supported yet"
 
   codecStats <- if withCodec then makeCodecStats d else pure []
 
@@ -195,6 +196,7 @@ makeCodecStats d@Data{..} = do
           eSl        = eSimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
+    DEnum _               -> throwError "Enum type not supported yet"
   let encoderDef = PatDef
         { pdModifiers = [MImplicit]
         , pdPattern   = PSimple $ "encode" <> dataCode

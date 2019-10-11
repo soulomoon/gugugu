@@ -58,6 +58,7 @@ $white_no_nl+                           ;
   "data"                                { simple TData }
 
   "="                                   { simple TEq }
+  "|"                                   { simple TVBar }
   ","                                   { simple TComma }
   "::"                                  { simple TDColon }
   "->"                                  { simple TRArrow }

@@ -91,6 +91,7 @@ data Func
 -- | Data constructor
 data DataCon
   = DRecord RecordCon
+  | DEnum (NonEmpty Text)
   deriving Show
 
 
@@ -217,6 +218,7 @@ resolveDataConDef dc = case dc of
   P.DRecord P.RecordCon{..} -> do
     recordConFields' <- traverse resolveRecordField recordConFields
     pure $ DRecord RecordCon{ recordConFields = recordConFields', .. }
+  P.DEnum names -> pure $ DEnum names
 
 resolveRecordField :: P.RecordField -> Either String RecordField
 resolveRecordField P.RecordField{..} = do
