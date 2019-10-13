@@ -17,4 +17,8 @@ trait DecoderImpl[S, R] {
                           , i: Int, name: String
                           , k: S => (S, A)
                           ): (S, A)
+
+  def decodeEnum[A]( s: S
+                   , byIndex: Int => Option[A], byName: String => Option[A]
+                   ): (S, A)
 }

@@ -69,6 +69,7 @@ optParser = do
     , transFieldCode   = NoTransform
     , transFieldValue  = ToSnake
     , transEnumCode    = NoTransform
+    , transEnumValue   = ToUpperSnake
     }
   pure GuguguTsOption
     { packagePrefix = splitOn' "/" packagePrefix'

@@ -17,4 +17,8 @@ trait EncoderImpl[S, R] {
                        , i: Int, name: String
                        , k: S => S
                        ): S
+
+  def encodeEnum[A]( s: S, a: A
+                   , asIndex: A => Int, asName: A => String
+                   ): S
 }

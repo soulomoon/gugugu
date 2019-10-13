@@ -96,6 +96,7 @@ data GuguguNameTransformers
     , transFieldCode   :: NameTransformer    -- ^ Field name code
     , transFieldValue  :: NameTransformer    -- ^ Field name value
     , transEnumCode    :: NameTransformer    -- ^ Enum name code
+    , transEnumValue   :: NameTransformer    -- ^ Enum name value
     }
   deriving Show
 
@@ -149,6 +150,11 @@ guguguNameTransformers defaults = do
     , help "enum name transformer for code"
     , value $ transEnumCode defaults
     ]
+  transEnumValue' <- nameTransformerOption $ fold
+    [ long "trans-enum-value"
+    , help "enum name transformer for value"
+    , value $ transEnumValue defaults
+    ]
   pure GuguguNameTransformers
     { transModuleCode  = transModuleCode'
     , transModuleValue = transModuleValue'
@@ -159,6 +165,7 @@ guguguNameTransformers defaults = do
     , transFieldCode   = transFieldCode'
     , transFieldValue  = transFieldValue'
     , transEnumCode    = transEnumCode'
+    , transEnumValue   = transEnumValue'
     }
 
 -- | Make Parser for 'NameTransformer'

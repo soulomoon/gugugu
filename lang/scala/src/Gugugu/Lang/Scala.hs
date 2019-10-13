@@ -14,6 +14,7 @@ module Gugugu.Lang.Scala
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifoldable
+import           Data.Bifunctor
 import           Data.Foldable
 import           Data.List.NonEmpty            (NonEmpty (..))
 import qualified Data.List.NonEmpty            as NonEmpty
@@ -219,7 +220,29 @@ makeCodecStats d@Data{..} = do
           eSl        = eSimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
-    DEnum _               -> throwError "Enum type not supported yet"
+    DEnum names           -> do
+      codecCases <- for (indexed $ toList names) $ \(i, name) -> do
+        enumCode <- mkEnumCode name
+        enumValue <- mkEnumValue name
+        let encodeCase = (PSimple enumCode, (eSimple cI, eSimple enumValue))
+            decodeCase = ((PSimple cI, PSimple enumValue), decoded)
+            decoded    = ECall (eSimple "Some") [eSimple enumCode]
+            cI         = showText i
+        pure (encodeCase, decodeCase)
+      let (encodeCases, decodeCases) = unzip codecCases
+      let encodeFDef  = ECall (eTCall1 (eImpl `EMember` "encodeEnum") tThis)
+            [eS, eA, fMatchE fst, fMatchE snd]
+            where
+              fMatchE selector = eAnon1 "a0" $ EMatch eA0 $
+                fmap (second selector) encodeCases
+              eA0              = eSimple "a0"
+          decodeFDef  = ECall (eTCall1 (eImpl `EMember` "decodeEnum") tThis)
+            [eS, fMatchD "i" fst, fMatchD "n" snd]
+            where
+              fMatchD arg selector = eAnon1 arg $ EMatch (eSimple arg) $
+                fmap (first selector) decodeCases <> errorCases
+              errorCases           = [(PSimple "_", eSimple "None")]
+      pure (encodeFDef, decodeFDef)
   let encoderDef = PatDef
         { pdModifiers = [MImplicit]
         , pdPattern   = PSimple $ "encode" <> dataCode
@@ -514,6 +537,10 @@ mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
 mkEnumCode :: GuguguK r m => Text -> m Text
 mkEnumCode name = withTransformer transEnumCode $ \f ->
   f name
+
+mkEnumValue :: GuguguK r m => Text -> m Text
+mkEnumValue name = withTransformer transEnumValue $ \f ->
+  unsafeQuote $ f name
 
 
 -- Utilities

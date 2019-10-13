@@ -191,4 +191,21 @@ object JsonCodecImpl
     }
   }
 
+  override def encodeEnum[A]( s: JsonCursor, a: A
+                            , asIndex: A => Int
+                            , asName: A => String
+                            ): JsonCursor = {
+    encodeString(s, asName(a))
+  }
+  override def decodeEnum[A]( s: JsonCursor
+                            , byIndex: Int => Option[A]
+                            , byName: String => Option[A]
+                            ): (JsonCursor, A) = {
+    val (s1, name) = decodeString(s)
+    byName(name) match {
+      case Some(a) => (s1, a)
+      case None => throw new CodecException("cannot read Enum")
+    }
+  }
+
 }
