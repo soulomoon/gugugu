@@ -114,6 +114,7 @@ data ObjectDef
   = ObjectDef
     { odModifiers :: [Modifier]
     , odName      :: Id
+    , odParent    :: Maybe Type
     , odBody      :: [TemplateStat]
     }
   deriving Show
@@ -126,9 +127,10 @@ TraitTemplateOpt  ::=  ‘extends’ TraitTemplate | [[‘extends’] TemplateBo
  -}
 data TraitDef
   = TraitDef
-    { tdName    :: Id
-    , tdTParams :: [Text]
-    , tdBody    :: [TemplateStat]
+    { tdModifiers :: [Modifier]
+    , tdName      :: Id
+    , tdTParams   :: [Text]
+    , tdBody      :: [TemplateStat]
     }
   deriving Show
 
@@ -155,6 +157,7 @@ data TemplateStat
   = TMSD FunDcl
   | TMSV PatDef
   | TMSF FunDef
+  | TMSO ObjectDef
   deriving Show
 
 
@@ -389,6 +392,7 @@ data Modifier
   = MCase
   | MImplicit
   | MOverride
+  | MSealed
   deriving Show
 
 {-|
@@ -502,6 +506,9 @@ instance SrcComp ObjectDef where
     writeModifiers odModifiers
     writeText "object "
     writeText odName
+    for_ odParent $ \t -> do
+      writeText " extends "
+      writeSrcComp t
     unless (null odBody) $ do
       writeText " {\n\n"
       indentBy 2 $ for_ odBody $ \ts -> do
@@ -512,6 +519,9 @@ instance SrcComp ObjectDef where
 
 instance SrcComp TraitDef where
   writeSrcComp TraitDef{..} = do
+    for_ tdModifiers $ \m -> do
+      writeSrcComp m
+      writeText " "
     writeText "trait "
     writeText tdName
     unless (null tdTParams) $ do
@@ -529,6 +539,7 @@ instance SrcComp TemplateStat where
     TMSV c -> writeSrcComp c
     TMSF c -> writeSrcComp c
     TMSD c -> writeSrcComp c
+    TMSO c -> writeSrcComp c
 
 
 instance SrcComp FunDcl where
@@ -688,6 +699,7 @@ instance SrcComp Modifier where
     MCase     -> writeText "case"
     MImplicit -> writeText "implicit"
     MOverride -> writeText "override"
+    MSealed   -> writeText "sealed"
 
 instance SrcComp StableId where
   writeSrcComp v = writeText $ T.intercalate "." $ toList $ unStableId v

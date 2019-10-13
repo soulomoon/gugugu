@@ -83,6 +83,7 @@ optParser = do
     , transTypeCode    = NoTransform
     , transFieldCode   = NoTransform
     , transFieldValue  = ToSnake
+    , transEnumCode    = NoTransform
     }
   pure GuguguScalaOption
     { packagePrefix = splitOn' "." packagePrefix'

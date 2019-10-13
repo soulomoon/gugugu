@@ -113,7 +113,29 @@ makeData md@Module{..} d@Data{..} = do
             , cdParams    = params
             }
       pure (TSC classDef, Nothing)
-    DEnum _               -> throwError "Enum type not supported yet"
+    DEnum names           -> do
+      let objParent = Just $ tSimple dataCode
+      enumObjs <- for (toList names) $ \name -> do
+        enumCode <- mkEnumCode name
+        pure ObjectDef
+          { odModifiers = [MCase]
+          , odName      = enumCode
+          , odParent    = objParent
+          , odBody      = []
+          }
+      let traitDef        = TraitDef
+            { tdModifiers = [MSealed]
+            , tdName      = dataCode
+            , tdTParams   = []
+            , tdBody      = []
+            }
+          objectDef       = ObjectDef
+            { odModifiers = []
+            , odName      = dataCode
+            , odParent    = Nothing
+            , odBody      = TMSO <$> enumObjs
+            }
+      pure (TST traitDef, Just objectDef)
 
   codecStats <- if withCodec then makeCodecStats d else pure []
 
@@ -132,6 +154,7 @@ makeData md@Module{..} d@Data{..} = do
           Nothing -> ObjectDef
             { odModifiers = []
             , odName      = dataCode
+            , odParent    = Nothing
             , odBody      = codecStats
             }
   pure (path, compilationUnit)
@@ -320,13 +343,15 @@ makeTransport md@Module{..} = do
         }
       path            = pkgDir moduleCode </> (T.unpack traitName <> ".scala")
       traitDef        = TraitDef
-        { tdName    = traitName
-        , tdTParams = ["F[_]", "G[_]", "M[_]"]
-        , tdBody    = fmap TMSD traitFuncs
+        { tdModifiers = []
+        , tdName      = traitName
+        , tdTParams   = ["F[_]", "G[_]", "M[_]"]
+        , tdBody      = fmap TMSD traitFuncs
         }
       objectDef       = ObjectDef
         { odModifiers = []
         , odName      = traitName
+        , odParent    = Nothing
         , odBody      = [TMSV nsDef]
             <> [TMSF toTransport | withServer]
             <> [TMSF fromTransport | withClient]
@@ -485,6 +510,10 @@ mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
 mkFieldValue :: GuguguK r m => RecordField -> m Expr
 mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
   eSimple $ unsafeQuote $ f recordFieldName
+
+mkEnumCode :: GuguguK r m => Text -> m Text
+mkEnumCode name = withTransformer transEnumCode $ \f ->
+  f name
 
 
 -- Utilities
