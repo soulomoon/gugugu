@@ -149,7 +149,14 @@ makeData d@Data{..} = do
             , ccdParams    = params
             }
       pure $ MEC classDec
-    DEnum _               -> throwError "Enum type not supported yet"
+    DEnum names           -> do
+      enums <- traverse mkEnumCode names
+      let typeDec = TypeAliasDeclaration
+            { tadModifiers = [MExport]
+            , tadName      = dataCode
+            , tadType      = TUnion $ tSimple <$> enums
+            }
+      pure $ MET typeDec
 
   codecDefs <- if withCodec then makeCodecDefs d else pure []
 
@@ -640,6 +647,10 @@ mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
 mkFieldValue :: GuguguK r m => RecordField -> m Expression
 mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
   ESimple $ unsafeQuote $ f recordFieldName
+
+mkEnumCode :: GuguguK r m => Text -> m Text
+mkEnumCode name = withTransformer transEnumCode $ \f ->
+  unsafeQuote $ f name
 
 
 -- Utilities

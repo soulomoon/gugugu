@@ -30,6 +30,7 @@ module Gugugu.Lang.Typescript.SourceUtils
   , Parameter(..)
   , Modifier(..)
   , MethodSignature(..)
+  , TypeAliasDeclaration(..)
 
   -- * A.2 Expressions and A.2 Expressions (TypeScript)
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-expressions
@@ -303,6 +304,22 @@ data MethodSignature
     , msTParams :: TypeParameters
     , msParams  :: [Parameter]
     , msRType   :: Type
+    }
+  deriving Show
+
+{-|
+TypeScript
+
+@
+TypeAliasDeclaration:
+        type BindingIdentifier TypeParameters opt = Type ;
+@
+ -}
+data TypeAliasDeclaration
+  = TypeAliasDeclaration
+    { tadModifiers :: [Modifier]
+    , tadName      :: BindingIdentifier
+    , tadType      :: Type
     }
   deriving Show
 
@@ -907,6 +924,7 @@ data ImplementationModuleElement
   = MEC ClassDeclaration
   | MEI InterfaceDeclaration
   | MED LexicalDeclaration
+  | MET TypeAliasDeclaration
   deriving Show
 
 
@@ -979,6 +997,15 @@ instance SrcComp MethodSignature where
     forWithComma_ msParams writeSrcComp
     writeText "): "
     writeSrcComp msRType
+
+instance SrcComp TypeAliasDeclaration where
+  writeSrcComp TypeAliasDeclaration{..} = do
+    writeModifiers tadModifiers
+    writeText "type "
+    writeText tadName
+    writeText " = "
+    writeSrcComp tadType
+    writeText ";"
 
 
 instance SrcComp PropertyDefinition where
@@ -1202,3 +1229,4 @@ instance SrcComp ImplementationModuleElement where
     MEC cd  -> writeSrcComp cd
     MEI id' -> writeSrcComp id'
     MED ld  -> writeSrcComp ld
+    MET td  -> writeSrcComp td
