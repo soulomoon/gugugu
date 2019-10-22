@@ -97,6 +97,11 @@ export interface EncoderImpl<S, R> {
                    , name: string
                    , k: (s: S) => S
                    ): S;
+
+  encodeEnum<A>( s: S, a: A
+               , asIndex: (a: A) => number
+               , asName: (a: A) => string
+               ): S;
 }
 
 export interface DecoderImpl<S, R> {
@@ -118,4 +123,9 @@ export interface DecoderImpl<S, R> {
                       , name: string
                       , k: (s: S) => [S, A]
                       ): [S, A];
+
+  decodeEnum<A>( s: S
+               , byIndex: (i: number) => null | A
+               , byName: (n: string) => null | A
+               ): [S, A];
 }

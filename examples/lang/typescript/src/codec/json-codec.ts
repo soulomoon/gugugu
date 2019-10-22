@@ -242,4 +242,22 @@ export class JsonCodecImpl implements EncoderImpl<JsonCursor, JsonRepr>
     return [s, a];
   }
 
+  public encodeEnum<A>( s: JsonCursor, a: A
+                      , asIndex: (a: A) => number
+                      , asName: (a: A) => string
+                      ): JsonCursor {
+    return this.encodeString(s, asName(a));
+  }
+  public decodeEnum<A>( s: JsonCursor
+                      , byIndex: (i: number) => null | A
+                      , byName: (n: string) => null | A
+                      ): [JsonCursor, A] {
+    const [s1, name] = this.decodeString(s);
+    const a = byName(name);
+    if (a === null) {
+      throw new CodecError("cannot read Enum");
+    }
+    return [s1, a];
+  }
+
 }

@@ -13,6 +13,7 @@ module Gugugu.Lang.Typescript
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Data.Bifunctor
 import           Data.Foldable
 import           Data.List
 import           Data.List.NonEmpty                 (NonEmpty (..))
@@ -22,6 +23,7 @@ import qualified Data.Map.Strict                    as Map
 import           Data.Text                          (Text)
 import qualified Data.Text                          as T
 import           Data.Traversable
+import           Data.Tuple
 import           System.FilePath
 import           Text.Printf
 
@@ -246,7 +248,31 @@ makeCodecDefs d@Data{..} = do
           eSl        = ESimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
-    DEnum _               -> throwError "Enum type not supported yet"
+    DEnum names           -> do
+      decodeCases <- for (indexed $ toList names) $ \(i, name) -> do
+        enumCode <- mkEnumCode name
+        enumValue <- mkEnumValue name
+        let encoded = (ESimple $ showText i, enumValue)
+            decoded = ESimple enumCode
+        pure (encoded, decoded)
+      let encodeCases = fmap swap decodeCases
+      let encodeFDef  = ECall (eImpl `EMember` "encodeEnum") [tThis]
+            [eS, eA, fSwitchE fst, fSwitchE snd]
+            where
+              fSwitchE selector = eArrow1 "a0" $ Right
+                [ SSwitch eA0 $
+                    fmap (second $ (: []) . SIR . selector) encodeCases
+                ]
+              eA0               = ESimple "a0"
+          decodeFDef  = ECall (eImpl `EMember` "decodeEnum") [tThis]
+            [eS, fSwitchD "i" fst, fSwitchD "n" snd]
+            where
+              fSwitchD arg selector = eArrow1 arg $ Right
+                [ SSwitch (ESimple arg) $
+                    fmap (first selector . second ((: []) . SIR)) decodeCases
+                , SIR $ ESimple "null"
+                ]
+      pure (encodeFDef, decodeFDef)
   let encoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
         , mvdName      = "encode" <> dataCode
@@ -651,6 +677,10 @@ mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
 mkEnumCode :: GuguguK r m => Text -> m Text
 mkEnumCode name = withTransformer transEnumCode $ \f ->
   unsafeQuote $ f name
+
+mkEnumValue :: GuguguK r m => Text -> m Expression
+mkEnumValue name = withTransformer transEnumValue $ \f ->
+  ESimple $ unsafeQuote $ f name
 
 
 -- Utilities
