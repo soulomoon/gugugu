@@ -6,3 +6,7 @@ data AssociatedListEntry
     { index :: Int32
     , value :: Int32
     }
+
+data Operation
+  = Add
+  | Mul

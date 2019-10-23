@@ -120,7 +120,12 @@ class HelloServerImpl implements HelloServer<Metadata, Metadata> {
 
   public fold(a: FoldRequest, meta: Metadata): Promise<WithMeta<Metadata, number>> {
     return this.withMeta(a, meta, async req => {
-      return req.values.reduce((b, c) => b + c, req.initial);
+      switch (req.op) {
+        case "Add":
+          return req.values.reduce((b, c) => b + c, req.initial);
+        case "Mul":
+          return req.values.reduce((b, c) => b * c, req.initial);
+      }
     });
   }
 

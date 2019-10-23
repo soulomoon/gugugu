@@ -25,7 +25,7 @@ object JsonHttpClientMain {
     helloModuleResource.use { hello =>
       for {
         _ <- doRequest {
-          FoldRequest(values = Vector(1, 3, 4), initial = 2)
+          FoldRequest(values = Vector(1, 3, 4), initial = 2, op = Operation.Add)
         }(hello.fold)
         _ <- doRequest(10)(hello.calculateFibs)
       } yield ()

@@ -21,7 +21,10 @@ class HelloImpl(implicit timer: Timer[IO])
     withMeta(fa) { req =>
       ContT.lift {
         IO.pure {
-          req.values.foldLeft(req.initial)(_ + _)
+          req.op match {
+            case Operation.Add => req.values.foldLeft(req.initial)(_ + _)
+            case Operation.Mul => req.values.foldLeft(req.initial)(_ * _)
+          }
         }
       }
     }
