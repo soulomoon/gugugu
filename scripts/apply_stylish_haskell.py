@@ -21,7 +21,7 @@ def apply_stylish_haskell(path: Path):
     subprocess.check_call([
         "stylish-haskell",
         "-i",
-        path,
+        str(path),
     ])
 
 
