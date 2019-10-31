@@ -87,3 +87,11 @@ stages:
               artifactName: x-test-$(os_arch)
             condition: and(eq(variables['runTests.failed'], 'true'), failed())
             displayName: Publish debug file for tests
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/publish.sh
+            displayName: Prepare to publish
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: build/release
+              artifactName: gugugu-$(os_arch)
