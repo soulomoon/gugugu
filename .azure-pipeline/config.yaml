@@ -68,3 +68,22 @@ stages:
             inputs:
               filePath: .azure-pipeline/build.sh
             displayName: Run the build
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.7"
+              addToPath: true
+              architecture: x64
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 10.x
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/test.sh
+            name: runTests
+            displayName: Run tests
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: tmp/test
+              artifactName: x-test-$(os_arch)
+            condition: and(eq(variables['runTests.failed'], 'true'), failed())
+            displayName: Publish debug file for tests
