@@ -2,7 +2,7 @@ trait Encoder[A] {
   def encode[S, R](s: S, a: A, impl: EncoderImpl[S, R]): S
 }
 
-object Encoder {
+object Encoder extends ForeignEncoders {
   def apply[A](implicit encoder: Encoder[A]): Encoder[A] = encoder
   def encode[S, R, A](a: A, impl: EncoderImpl[S, R])
                      (implicit encoder: Encoder[A]): R = {
