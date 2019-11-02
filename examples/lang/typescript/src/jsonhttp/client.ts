@@ -68,11 +68,13 @@ class HttpClientTransport
       }, async res => {
         const resMeta = headersToMeta(res.headers);
         const body = await readAllAsUtf8String(res);
+        console.log("Got data: " + body);
         resolve({
           meta: resMeta,
           data: body,
         });
       });
+      console.log("Sending: " + payload);
       req.write(payload);
       req.end();
     });

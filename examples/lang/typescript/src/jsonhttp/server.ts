@@ -9,7 +9,6 @@ import {
 import {
   QualName,
   WithMeta,
-  ServerCodecHandler,
 } from "../../build/generated/gugugu/gugugu/transport";
 import {
   FoldRequest,
@@ -40,12 +39,11 @@ async function main(): Promise<void> {
   const impl = new HelloServerImpl();
   const serverTransport = HelloServer.toTransport(impl, jsonCodecImpl, jsonCodecImpl);
 
-  const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const asyncHandler = async (req: IncomingMessage, res: ServerResponse) => {
     console.log(`Got request ${req.url}`);
     console.log(req.headers)
     let url = req.url;
     if (url === undefined) {
-      res.end();
       return;
     }
     if (url.startsWith("/")) {
@@ -56,7 +54,6 @@ async function main(): Promise<void> {
 
     if (psLen < 2) {
       res.writeHead(404)
-      res.end();
       return;
     }
 
@@ -81,11 +78,11 @@ async function main(): Promise<void> {
 
     if (handler === null) {
       res.writeHead(404)
-      res.end();
       return;
     }
 
     const body = await readAllAsUtf8String(req);
+    console.log("Got data: " + body);
     const json = JSON.parse(body);
     const reqMeta = headersToMeta(req.headers);
     const gr = await handler({
@@ -98,11 +95,20 @@ async function main(): Promise<void> {
       resMeta = {};
     }
     const resContent = JSON.stringify(gr.data);
+    console.log("Sending: " + resContent);
     const resHeaders = metaToHeaders(resMeta);
     res.writeHead(200, resHeaders);
     res.write(resContent);
-    res.end();
+  };
 
+  const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
+    asyncHandler(req, res).catch(reason => {
+      console.error(`Error occurred when handling request ${req.url}:`);
+      console.error(reason);
+      res.write(500);
+    }).finally(() => {
+      res.end();
+    });
   });
 
   server.listen(guguguExamplePort, guguguExampleHost);
