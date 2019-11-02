@@ -1,0 +1,97 @@
+name: $(SourceBranchName)-$(Date:yyyyMMdd)$(Rev:.rr)
+trigger:
+  batch: true
+  branches:
+    include:
+      - master
+      - feature/*
+      - ci/*
+  tags:
+    include:
+      - v*
+
+stages:
+  - stage: build
+    variables:
+      stack_version: "2.1.3"
+    jobs:
+      - job: build
+        strategy:
+          matrix:
+            linux:
+              vm_image: ubuntu-18.04
+              os_arch: linux-x64
+            darwin:
+              vm_image: macOS-10.14
+              os_arch: darwin-x64
+            win32:
+              vm_image: windows-2019
+              os_arch: win32-x64
+        pool:
+          vmImage: $(vm_image)
+        steps:
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/setup.sh
+            displayName: Setup environment
+          - task: CacheBeta@0
+            inputs:
+              key: stack-bin | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)"
+              path: $(stack_root)/bin
+              cacheHitVar: CACHE_RESTORED_STACK_BIN
+            displayName: Cache stack bin
+          - task: CacheBeta@0
+            inputs:
+              key: stack-pantry | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml.lock
+              path: $(stack_root)/pantry
+              cacheHitVar: CACHE_RESTORED_STACK_PANTRY
+            displayName: Cache stack pantry
+          - task: CacheBeta@0
+            inputs:
+              key: stack-programs | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | "$(stack_resolver)"
+              path: $(stack_root)/programs
+              cacheHitVar: CACHE_RESTORED_STACK_PROGRAMS
+            displayName: Cache stack programs
+          - task: CacheBeta@0
+            inputs:
+              key: stack-snapshots | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml* | **/package.yaml
+              path: $(stack_root)/snapshots
+              cacheHitVar: CACHE_RESTORED_STACK_SNAPSHOTS
+            displayName: Cache dependencies
+          - task: CacheBeta@0
+            inputs:
+              key: stack-setup-exe-cache | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml* | **/package.yaml | **/Setup.hs
+              path: $(stack_root)/setup-exe-cache
+              cacheHitVar: CACHE_RESTORED_STACK_SETUP_EXE_CACHE
+            displayName: Cache setup executable
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/build.sh
+            displayName: Run the build
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.7"
+              addToPath: true
+              architecture: x64
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 10.x
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/test.sh
+            name: runTests
+            displayName: Run tests
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: tmp/test
+              artifactName: x-test-$(os_arch)
+            condition: and(eq(variables['runTests.failed'], 'true'), failed())
+            displayName: Publish debug file for tests
+          - task: Bash@3
+            inputs:
+              filePath: .azure-pipeline/publish.sh
+            displayName: Prepare to publish
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: build/release
+              artifactName: gugugu-$(os_arch)

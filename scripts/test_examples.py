@@ -3,10 +3,11 @@ import sys
 import time
 import socket
 import subprocess
+from argparse import ArgumentParser
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Mapping, Tuple, Sequence
-from unittest import TestCase, TestSuite, TextTestRunner, TestResult
+from typing import Tuple, Sequence, Mapping, ContextManager
+from unittest import TestCase, TestSuite, TestResult, TextTestRunner
 
 import yaml
 
@@ -14,6 +15,11 @@ from gugugu_defs import PROJECT_ROOT
 
 
 def main():
+    parser = ArgumentParser()
+    parser.add_argument("--verbose", "-v", action="count", default=0,
+                        help="be more verbose")
+    args = parser.parse_args()
+    verbosity = args.verbose
     suite = TestSuite()
 
     for protocol, (servers, clients) in load_config().items():
@@ -26,8 +32,11 @@ def main():
             protocol_suite.addTest(server_suite)
         suite.addTest(protocol_suite)
 
-    runner = TextTestRunner(verbosity=2)
-    runner.run(suite)
+    runner = TextTestRunner(verbosity=verbosity)
+    result = runner.run(suite)
+    if result.wasSuccessful():
+        return
+    sys.exit(1)
 
 
 class ProcessHelper:
@@ -44,7 +53,8 @@ class ProcessHelper:
         raise NotImplementedError
 
     @contextmanager
-    def with_process_running(self, server: "Server"):
+    def with_process_running(self, server: "Server",
+                             ) -> ContextManager[subprocess.Popen]:
         output_path = self.output_path(server)
         os.makedirs(output_path.parent, exist_ok=True)
         with ExitStack() as stack:
@@ -88,7 +98,7 @@ class Server(ProcessHelper):
         return dir_path / f"{server.protocol}-{server.name}"
 
     @contextmanager
-    def with_running(self):
+    def with_running(self) -> ContextManager[None]:
         with self.with_process_running(self) as p:
             try:
                 self._wait_until_server_ready(p)
@@ -198,16 +208,16 @@ class TestSuiteWithServer(TestSuite):
 
     def run(self, result: TestResult, debug=False):
         name = f"{self._server.protocol:<10} : {self._server.name:<20} server"
-        server_test = DummyTest(f"{name} starting        ")
+        server_test = DummyTestForServer(
+            self._server, f"{name} starting        ")
         result.startTest(server_test)
-        result.testsRun -= 1
         try:
             with self._server.with_running():
                 result.addSuccess(server_test)
                 super().run(result, debug=debug)
-                server_test = DummyTest(f"{name} stopping        ")
+                server_test = DummyTestForServer(
+                    self._server, f"{name} stopping        ")
                 result.startTest(server_test)
-                result.testsRun -= 1
             result.addSuccess(server_test)
         except Exception as e:
             exc_info = sys.exc_info()
@@ -215,11 +225,13 @@ class TestSuiteWithServer(TestSuite):
 
 
 # Copied from unittest.suite._ErrorHolder
-class DummyTest:
+class DummyTestForServer(TestCase):
 
     failureException = None
 
-    def __init__(self, description):
+    def __init__(self, server: Server, description):
+        super().__init__()
+        self._server = server
         self.description = description
 
     def id(self):
@@ -229,7 +241,8 @@ class DummyTest:
         return None
 
     def __repr__(self):
-        return f"<DummyTest description={self.description!r}>"
+        return f"<DummyTest " \
+               f"server={self._server} description={self.description!r}>"
 
     def __str__(self):
         return self.id()

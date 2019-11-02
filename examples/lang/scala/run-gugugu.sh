@@ -1,6 +1,14 @@
 #!/bin/bash
 
-THIS_DIR=$(dirname $PWD/${BASH_SOURCE[0]})
+set -e
+
+THIS_FILE=${BASH_SOURCE[0]}
+if echo $THIS_FILE | grep -q -e "^[^/]"
+then
+	THIS_FILE="$PWD/$THIS_FILE"
+fi
+
+THIS_DIR=$(dirname $THIS_FILE)
 EXAMPLE_DIR=$(dirname $(dirname $THIS_DIR))
 SRC_OUTPUT=$THIS_DIR/build/generated/gugugu/main/scala
 
