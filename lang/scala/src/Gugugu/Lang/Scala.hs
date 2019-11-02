@@ -24,6 +24,7 @@ import           Data.Text                     (Text)
 import qualified Data.Text                     as T
 import           Data.Traversable
 import           System.FilePath
+import           Text.Printf
 
 import           Gugugu.Resolver
 import           Gugugu.Utilities
@@ -95,11 +96,26 @@ makeModule md@Module{..} = do
     then Just <$> makeTransport md else pure Nothing
   pure $ Map.fromList $ toList tPair <> pairs
 
-makeData :: GuguguK r m => Module -> Data -> m (FilePath, CompilationUnit)
-makeData md@Module{..} d@Data{..} = do
+makeData :: GuguguK r m
+         => Module
+         -> Data
+         -> m (FilePath, CompilationUnit)
+makeData md d@Data{..} = do
+  GuguguScalaOption{..} <- asks toGuguguScalaOption
+  case dataConDef of
+    Just x  -> makeGuguguData md d x
+    Nothing -> throwError $ printf
+      "%s target does not support foreign type" thisTarget
+
+makeGuguguData :: GuguguK r m
+               => Module
+               -> Data
+               -> DataCon
+               -> m (FilePath, CompilationUnit)
+makeGuguguData md@Module{..} d@Data{..} dataCon = do
   GuguguScalaOption{..} <- asks toGuguguScalaOption
   dataCode <- mkTypeCode d
-  (typeDef, maybeObjWithoutCodec) <- case dataConDef of
+  (typeDef, maybeObjWithoutCodec) <- case dataCon of
     DRecord RecordCon{..} -> do
       params <- for recordConFields $ \rf@RecordField{..} -> do
         scalaType <- makeType recordFieldType
@@ -173,7 +189,7 @@ makeCodecStats d@Data{..} = do
       tThis         = tSimple dataCode
       codecPkgId n  = StableId $ codecPkg <> (n :| [])
   (encodeFDef, decodeFDef) <- case dataConDef of
-    DRecord RecordCon{..} -> do
+    Just (DRecord RecordCon{..}) -> do
       let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
           eDecodeRecordField = eImpl `EMember` "decodeRecordField"
           eEncoderObj        = ESimple encoderTypeId
@@ -220,7 +236,7 @@ makeCodecStats d@Data{..} = do
           eSl        = eSimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
-    DEnum names           -> do
+    Just (DEnum names)           -> do
       codecCases <- for (indexed $ toList names) $ \(i, name) -> do
         enumCode <- mkEnumCode name
         enumValue <- mkEnumValue name
@@ -243,6 +259,8 @@ makeCodecStats d@Data{..} = do
                 fmap (first selector) decodeCases <> errorCases
               errorCases           = [(PSimple "_", eSimple "None")]
       pure (encodeFDef, decodeFDef)
+    Nothing                      -> throwError $ printf
+      "%s target does not support foreign type" thisTarget
   let encoderDef = PatDef
         { pdModifiers = [MImplicit]
         , pdPattern   = PSimple $ "encode" <> dataCode
@@ -544,6 +562,9 @@ mkEnumValue name = withTransformer transEnumValue $ \f ->
 
 
 -- Utilities
+
+thisTarget :: Text
+thisTarget = "scala"
 
 guguguCodecPkg :: HasGuguguScalaOption r => r -> NonEmpty Text
 guguguCodecPkg r =

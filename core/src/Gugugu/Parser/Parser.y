@@ -83,11 +83,16 @@ dec       : dataDec                     { DData $1 }
 
 dataDec :: { DataDec }
 dataDec   : "data" conid
-              "=" dataCon ";;"          { DataDec
+              maybeDataCon ";;"         { DataDec
                                           { dataDecName = $2
-                                          , dataDecDef  = $4
+                                          , dataDecDef  = $3
                                           }
                                         }
+
+maybeDataCon :: { Maybe DataCon }
+maybeDataCon
+          : {- empty -}                 { Nothing }
+          | "=" dataCon                 { Just $2 }
 
 funcDec :: { FuncDec }
 funcDec   : varid

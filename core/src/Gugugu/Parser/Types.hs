@@ -183,7 +183,7 @@ data Dec
 data DataDec
   = DataDec
     { dataDecName :: Text
-    , dataDecDef  :: DataCon
+    , dataDecDef  :: Maybe DataCon
     }
   deriving Show
 

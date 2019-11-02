@@ -75,7 +75,8 @@ data Module
 data Data
   = Data
     { dataName   :: Text
-    , dataConDef :: DataCon
+    , dataConDef :: Maybe DataCon
+    -- ^ Foreign data type does not have constructor
     }
   deriving Show
 
@@ -196,11 +197,11 @@ resolveModuleDec expected P.ModuleDec{..} = do
 
 resolveDataDec :: P.DataDec -> Either String Data
 resolveDataDec P.DataDec{..} = do
-  dataConDef <- resolveDataConDef dataDecDef
+  dataConDef <- traverse resolveDataConDef dataDecDef
   case dataConDef of
-    DRecord RecordCon{..} | dataDecName /= recordConName ->
+    Just (DRecord RecordCon{..}) | dataDecName /= recordConName ->
       Left "unmatched type name and data constructor name"
-    _                                                    -> pure ()
+    _                                                           -> pure ()
   pure Data{ dataName = dataDecName, .. }
 
 resolveFuncDec :: P.FuncDec -> Either String Func

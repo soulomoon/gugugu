@@ -129,7 +129,7 @@ makeData d@Data{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
   dataCode <- mkTypeCode d
   dec <- case dataConDef of
-    DRecord RecordCon{..} -> do
+    Just (DRecord RecordCon{..}) -> do
       params <- for recordConFields $ \rf@RecordField{..} -> do
         tsType <- makeType recordFieldType
         fieldCode <- mkFieldCode rf
@@ -151,7 +151,7 @@ makeData d@Data{..} = do
             , ccdParams    = params
             }
       pure $ MEC classDec
-    DEnum names           -> do
+    Just (DEnum names)           -> do
       enums <- traverse mkEnumCode names
       let typeDec = TypeAliasDeclaration
             { tadModifiers = [MExport]
@@ -159,6 +159,8 @@ makeData d@Data{..} = do
             , tadType      = TUnion $ tSimple <$> enums
             }
       pure $ MET typeDec
+    Nothing                      -> throwError $ printf
+      "%s target does not support foreign type" thisTarget
 
   codecDefs <- if withCodec then makeCodecDefs d else pure []
 
@@ -199,7 +201,7 @@ makeCodecDefs d@Data{..} = do
       tThis           = tSimple dataCode
       codecPkgId n    = NamespaceName $ guguguCodecAlias :| [n]
   (encodeFDef, decodeFDef) <- case dataConDef of
-    DRecord RecordCon{..} -> do
+    Just (DRecord RecordCon{..}) -> do
       let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
           eDecodeRecordField = eImpl `EMember` "decodeRecordField"
           eS0                = ESimple "s0"
@@ -248,7 +250,7 @@ makeCodecDefs d@Data{..} = do
           eSl        = ESimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
-    DEnum names           -> do
+    Just (DEnum names)           -> do
       decodeCases <- for (indexed $ toList names) $ \(i, name) -> do
         enumCode <- mkEnumCode name
         enumValue <- mkEnumValue name
@@ -273,6 +275,8 @@ makeCodecDefs d@Data{..} = do
                 , SIR $ ESimple "null"
                 ]
       pure (encodeFDef, decodeFDef)
+    Nothing                      -> throwError $ printf
+      "%s target does not support foreign type" thisTarget
   let encoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
         , mvdName      = "encode" <> dataCode
@@ -684,6 +688,9 @@ mkEnumValue name = withTransformer transEnumValue $ \f ->
 
 
 -- Utilities
+
+thisTarget :: Text
+thisTarget = "typescript"
 
 guguguCodecAlias :: Text
 guguguCodecAlias = "_gugugu_c"
