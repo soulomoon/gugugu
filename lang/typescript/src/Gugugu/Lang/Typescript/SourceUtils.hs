@@ -69,6 +69,7 @@ module Gugugu.Lang.Typescript.SourceUtils
   -- | * http://www.ecma-international.org/ecma-262/6.0/#sec-scripts-and-modules
   --   * https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#a9-scripts-and-modules
   , ImplementationModule(..)
+  , ImportItem
   , ImplementationModuleElement(..)
   ) where
 
@@ -194,6 +195,7 @@ data Type
   | TUnion (NonEmpty Type)
   | TParen Type
   | TFunc TypeParameters ParameterList Type
+  | TArray [Type]
   deriving Show
 
 {-|
@@ -876,10 +878,13 @@ ImplementationModuleElements:
  -}
 data ImplementationModule
   = ImplementationModule
-    { imImports :: [(BindingIdentifier, Text)]
+    { imImports :: [ImportItem]
     , imBody    :: [ImplementationModuleElement]
     }
   deriving Show
+
+-- | Namespaced import like @import * as NAME from \"FROM\"@
+type ImportItem = (BindingIdentifier, Text)
 
 {-|
 TypeScript
@@ -968,6 +973,10 @@ instance SrcComp Type where
       forWithComma_ ps writeSrcComp
       writeText ") => "
       writeSrcComp rt
+    TArray ts       -> do
+      writeText "["
+      forWithComma_ ts writeSrcComp
+      writeText "]"
 
 instance SrcComp NamespaceName where
   writeSrcComp n = writeText $ T.intercalate "." $ toList $ unNamespaceName n

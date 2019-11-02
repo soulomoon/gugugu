@@ -20,6 +20,8 @@ import           Data.List.NonEmpty                 (NonEmpty (..))
 import qualified Data.List.NonEmpty                 as NonEmpty
 import           Data.Map.Strict                    (Map)
 import qualified Data.Map.Strict                    as Map
+import           Data.Set                           (Set)
+import qualified Data.Set                           as Set
 import           Data.Text                          (Text)
 import qualified Data.Text                          as T
 import           Data.Traversable
@@ -73,10 +75,10 @@ makeModules :: MonadError String m
             => GuguguTsOption
             -> [Module]
             -> m (Map FilePath ImplementationModule)
-makeModules opts modules = do
+makeModules opts@GuguguTsOption{..} modules = do
   let moduleMap = Map.fromList $
         fmap (\md@Module{..} -> (moduleName, md)) modules
-  pairs <- for modules $ \md@Module{..} -> do
+  foreignCodecPartsAndfiles <- for modules $ \md@Module{..} -> do
     let rCtx = ResolutionContext
           { rcModules       = moduleMap
           , rcCurrentModule = md
@@ -86,13 +88,40 @@ makeModules opts modules = do
           , gCtx  = rCtx
           }
     runReaderT (makeModule md) env
-  pure $ Map.fromList pairs
+  let (foreignCodecParts, pairs) = unzip foreignCodecPartsAndfiles
+  let (foreignImports, (encodeImpls, decodeImpls)) = fold foreignCodecParts
+  let allFiles            = if withCodec
+        then filesWithoutForeign <> foreignCodecs else filesWithoutForeign
+      filesWithoutForeign = Map.fromList pairs
+      foreignCodecs       = Map.singleton "gugugu/foreign-codecs.ts"
+        ImplementationModule
+          { imImports = toList foreignImports
+          , imBody    =
+              [ f "ForeignEncodersImpl" encodeImpls
+              , f "ForeignDecodersImpl" decodeImpls
+              ]
+          }
+        where
+          f name methods = MEI InterfaceDeclaration
+            { idModifiers = [MExport]
+            , idName      = name
+            , idTParams   = ["S"]
+            , idMethods   = methods
+            }
+  pure allFiles
 
-makeModule :: GuguguK r m => Module -> m (FilePath, ImplementationModule)
+type ForeignTypeResult
+  = (Set ImportItem, ([MethodSignature], [MethodSignature]))
+
+makeModule :: GuguguK r m
+           => Module
+           -> m (ForeignTypeResult, (FilePath, ImplementationModule))
 makeModule md@Module{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
   moduleMap <- asks $ rcModules . toResolutionContext
-  typeDecs <- traverse makeData moduleDatas
+  foreignCodecPartsAndtypeDecs <- traverse (makeData md) moduleDatas
+  let (foreignCodecParts, typeDecs) = unzip foreignCodecPartsAndtypeDecs
+  let foreignCodecMerged@(foreignImports, _) = fold foreignCodecParts
   transportElems <- if (withServer || withClient) && not (null moduleFuncs)
     then makeTransport md
     else pure []
@@ -118,14 +147,18 @@ makeModule md@Module{..} = do
       imports    =
           f withCodec guguguCodecAlias "codec"
         . f (withServer || withClient) guguguTransportAlias "transport"
+        . (if withCodec then (toList foreignImports ++) else id)
         $ imports'
         where f cond alias m = if cond
                 then ((alias, importPrefix <> "/gugugu/" <> m) :)
                 else id
-  pure (path, moduleBody)
+  pure (foreignCodecMerged, (path, moduleBody))
 
-makeData :: GuguguK r m => Data -> m [ImplementationModuleElement]
-makeData d@Data{..} = do
+makeData :: GuguguK r m
+         => Module
+         -> Data
+         -> m (ForeignTypeResult, [ImplementationModuleElement])
+makeData md d@Data{..} = do
   GuguguTsOption{..} <- asks toGuguguTsOption
   dataCode <- mkTypeCode d
   dec <- case dataConDef of
@@ -159,10 +192,17 @@ makeData d@Data{..} = do
             , tadType      = TUnion $ tSimple <$> enums
             }
       pure $ MET typeDec
-    Nothing                      -> throwError $ printf
-      "%s target does not support foreign type" thisTarget
+    Nothing                      -> do
+      (_, name) <- resolveForeign' d
+      let typeDec = TypeAliasDeclaration
+            { tadModifiers = [MExport]
+            , tadName      = dataCode
+            , tadType      = TParamed name []
+            }
+      pure $ MET typeDec
 
-  codecDefs <- if withCodec then makeCodecDefs d else pure []
+  (foreigns, codecDefs) <- if withCodec
+    then makeCodecDefs md d else pure mempty
 
   let decs = if null codecDefs
         then [dec]
@@ -187,10 +227,13 @@ makeData d@Data{..} = do
                   }
                 name        = "_" <> dataCode
             in [dec, codecClsDec, aliasDec]
-  pure decs
+  pure (foreigns, decs)
 
-makeCodecDefs :: GuguguK r m => Data -> m [MemberVariableDeclaration]
-makeCodecDefs d@Data{..} = do
+makeCodecDefs :: GuguguK r m
+              => Module
+              -> Data
+              -> m (ForeignTypeResult, [MemberVariableDeclaration])
+makeCodecDefs md d@Data{..} = do
   dataCode <- mkTypeCode d
   let eImpl           = ESimple "impl"
       encoderTypeName = codecPkgId "Encoder"
@@ -200,7 +243,7 @@ makeCodecDefs d@Data{..} = do
       -- typescript type of this type
       tThis           = tSimple dataCode
       codecPkgId n    = NamespaceName $ guguguCodecAlias :| [n]
-  (encodeFDef, decodeFDef) <- case dataConDef of
+  (foreignCodecs, encodeFDef, decodeFDef) <- case dataConDef of
     Just (DRecord RecordCon{..}) -> do
       let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
           eDecodeRecordField = eImpl `EMember` "decodeRecordField"
@@ -249,7 +292,7 @@ makeCodecDefs d@Data{..} = do
           -- last s
           eSl        = ESimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
-      pure (encodeFDef, decodeFDef)
+      pure (mempty, encodeFDef, decodeFDef)
     Just (DEnum names)           -> do
       decodeCases <- for (indexed $ toList names) $ \(i, name) -> do
         enumCode <- mkEnumCode name
@@ -274,9 +317,43 @@ makeCodecDefs d@Data{..} = do
                     fmap (first selector . second ((: []) . SIR)) decodeCases
                 , SIR $ ESimple "null"
                 ]
-      pure (encodeFDef, decodeFDef)
-    Nothing                      -> throwError $ printf
-      "%s target does not support foreign type" thisTarget
+      pure (mempty, encodeFDef, decodeFDef)
+    Nothing                      -> do
+      (importItem, tsThisName) <- resolveForeign' d
+      let encodeImpl         = MethodSignature
+            { msName    = encodeF
+            , msTParams = []
+            , msParams  =
+                [ pS
+                , Parameter
+                    { pModifiers = []
+                    , pName      = "a"
+                    , pOptional  = False
+                    , pType      = tsThis
+                    }
+                ]
+            , msRType   = tS
+            }
+          decodeImpl         = MethodSignature
+            { msName    = decodeF
+            , msTParams = []
+            , msParams  = [pS]
+            , msRType   = TArray [tS, tsThis]
+            }
+          encodeFDef         = ECall (eImpl `EMember` encodeF) [] [eS, eA]
+          decodeFDef         = ECall (eImpl `EMember` decodeF) [] [eS]
+          (encodeF, decodeF) = foreignCodecName md d
+          tsThis             = TParamed tsThisName []
+          pS                 = Parameter
+            { pModifiers = []
+            , pName      = "s"
+            , pOptional  = False
+            , pType      = tS
+            }
+          tS                 = tSimple "S"
+      pure ( (Set.singleton importItem, ([encodeImpl], [decodeImpl]))
+           , encodeFDef, decodeFDef
+           )
   let encoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
         , mvdName      = "encode" <> dataCode
@@ -297,7 +374,7 @@ makeCodecDefs d@Data{..} = do
         { afParams = ["s", "impl"]
         , afBody   = Left decodeFDef
         }
-  pure [encoderDef, decoderDef]
+  pure (foreignCodecs, [encoderDef, decoderDef])
 
 makeTransport :: GuguguK r m => Module -> m [ImplementationModuleElement]
 makeTransport md@Module{..} = do
@@ -636,6 +713,24 @@ resolveTypeCodec t = do
       let f ct = ESimple guguguCodecAlias `EMember` ct `EMember` T.toLower t
       in pure (f "Encoder", f "Decoder")
 
+resolveForeign :: Data -> Maybe ((BindingIdentifier, Text), NamespaceName)
+resolveForeign Data{..} = do
+  foreignPragma <- Map.lookup thisTarget dataForeignMap
+  let (importPath', name) = T.breakOnEnd "\"." foreignPragma
+  let importPath = T.drop 1 . T.dropEnd 2 $ importPath'
+      importName = "_gugugu_f_"
+        <> (T.filter (/= '.') . T.replace "/" "_" $ importPath)
+      qualName   = NamespaceName $ importName :| [name]
+  pure ((importName, importPath), qualName)
+
+resolveForeign' :: GuguguK r m
+                => Data
+                -> m ((BindingIdentifier, Text), NamespaceName)
+resolveForeign' d@Data{..} = case resolveForeign d of
+  Just v  -> pure v
+  Nothing -> throwError $ printf
+      "Type %s does not have foreign pragma" dataName
+
 tsModulePath :: NonEmpty Text -> FilePath
 tsModulePath (part1 :| parts) = foldl' (\z x -> z </> T.unpack x)
                                        (T.unpack part1)
@@ -700,6 +795,13 @@ guguguTransportAlias = "_gugugu_t"
 
 mkGuguguImportAlias :: GuguguK r m => Module -> m Text
 mkGuguguImportAlias Module{..} = pure $ "_gugugu_i_" <> moduleName
+
+foreignCodecName :: Module -> Data -> (Text, Text)
+foreignCodecName Module{..} Data{..} = ("encode" <> qName, "decode" <> qName)
+  where
+    qName = if moduleName == "Foreign"
+      then dataName
+      else moduleName <> dataName
 
 nSimple :: Text -> NamespaceName
 nSimple t = NamespaceName $ t :| []
