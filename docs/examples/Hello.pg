@@ -1,0 +1,17 @@
+module Hello where
+
+
+-- The content after double-dash is ignored.
+
+fold :: FoldRequest -> IO Int32
+
+data FoldRequest
+  = FoldRequest
+    { values  :: List Int32
+    , initial :: Int32
+    , op      :: Operation
+    }
+
+data Operation
+  = Add
+  | Mul
