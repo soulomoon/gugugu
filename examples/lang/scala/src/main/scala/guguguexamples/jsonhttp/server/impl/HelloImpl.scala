@@ -1,5 +1,7 @@
 package guguguexamples.jsonhttp.server.impl
 
+import java.time.LocalDateTime
+
 import cats.effect.{IO, Timer}
 import cats.implicits._
 import guguguexamples.definitions.hello._
@@ -44,6 +46,12 @@ class HelloImpl(implicit timer: Timer[IO])
         }
         AssociatedList(rv.result())
       }}
+    }
+  }
+
+  override def incrOneDay(fa: WithMeta[LocalDateTime]): HandlerF[WithMeta[LocalDateTime]] = {
+    withMeta(fa) { d =>
+      ContT.pure(d.plusDays(1))
     }
   }
 

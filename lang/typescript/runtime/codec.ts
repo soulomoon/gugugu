@@ -1,3 +1,8 @@
+import {
+  ForeignEncodersImpl,
+  ForeignDecodersImpl
+} from "./foreign-codecs";
+
 export type Encoder<A> = <S, R>(s: S, a: A, impl: EncoderImpl<S, R>) => S;
 
 export type Decoder<A> = <S, R>(s: S, impl: DecoderImpl<S, R>) => [S, A];
@@ -78,7 +83,7 @@ class _Decoder {
 
 export const Decoder = new _Decoder();
 
-export interface EncoderImpl<S, R> {
+export interface EncoderImpl<S, R> extends ForeignEncodersImpl<S> {
   encodeWithState(k: (s: S) => S): R
 
   encodeUnit(s: S, v: {}): S;
@@ -104,7 +109,7 @@ export interface EncoderImpl<S, R> {
                ): S;
 }
 
-export interface DecoderImpl<S, R> {
+export interface DecoderImpl<S, R> extends ForeignDecodersImpl<S> {
   decodeWithState<A>(r: R, k: (s: S) => [S, A]): A
 
   decodeUnit(s: S): [S, {}];

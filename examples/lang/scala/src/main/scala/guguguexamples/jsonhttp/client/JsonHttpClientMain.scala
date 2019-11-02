@@ -1,5 +1,7 @@
 package guguguexamples.jsonhttp.client
 
+import java.time.LocalDateTime
+
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import guguguexamples.codec.JsonCodecImpl
@@ -28,6 +30,10 @@ object JsonHttpClientMain {
           FoldRequest(values = Vector(1, 3, 4), initial = 2, op = Operation.Add)
         }(hello.fold)
         _ <- doRequest(10)(hello.calculateFibs)
+        now <- IO.delay {
+          LocalDateTime.now()
+        }
+        _ <- doRequest(now)(hello.incrOneDay)
       } yield ()
     }
   }

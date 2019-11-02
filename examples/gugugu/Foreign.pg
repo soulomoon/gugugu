@@ -1,0 +1,6 @@
+module Foreign where
+
+
+data DateTime
+  {-# FOREIGN scala      java.time.LocalDateTime  #-}
+  {-# FOREIGN typescript "moment".Moment          #-}

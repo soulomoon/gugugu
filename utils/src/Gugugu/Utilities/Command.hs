@@ -54,12 +54,13 @@ data GuguguCmdOption a
   deriving Show
 
 -- | Execute the parser
-execParser' :: MonadIO m => Parser a -> m (GuguguCmdOption a)
-execParser' parser = liftIO $ execParser infoParser
+execParser' :: MonadIO m => Parser a -> String -> m (GuguguCmdOption a)
+execParser' parser version = liftIO $ execParser infoParser
   where
     infoParser = info fullParser fullDesc
-    fullParser = cmdParser <**> helper <**> pHelpTransformer
+    fullParser = cmdParser <**> helper <**> pHelpTransformer <**> versionOpt
     cmdParser  = mkCmdOptParser parser
+    versionOpt = infoOption version (long "version" <> help "show version")
 
 -- | Parser for whether generate codec \/ server \/ client
 pWithCodecServerClient :: Parser (Bool, Bool, Bool)

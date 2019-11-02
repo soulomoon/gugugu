@@ -4,11 +4,16 @@ import cats.effect.IO
 import gugugu.lang.scala.runtime.transport._
 import guguguexamples.jsonhttp._
 import guguguexamples.utils.ContT
+import io.chrisdavenport.log4cats.Logger
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.http4s._
 
 object ContCodecHandler extends
   ServerCodecHandler[WithMeta, WithMeta, HandlerF, Json, Json] {
+
+  private val logger: Logger[IO] = Slf4jLogger.getLogger
+
   override def apply[A, B]( fr: WithMeta[Json]
                           , decodeA: Json => A
                           , encodeB: B => Json
@@ -17,9 +22,12 @@ object ContCodecHandler extends
     val (reqMeta, reqR) = fr
     for {
       req <- ContT.lift {
-        IO.delay {
-          decodeA(reqR)
-        }.attempt
+        for {
+          _ <- logger.info(s"Got data: $reqR")
+          ea <- IO.delay {
+            decodeA(reqR)
+          }.attempt
+        } yield ea
       }.flatMap {
         case Right(v) => ContT.pure[Response[IO], IO, A](v)
         case Left(_) => ContT.completeWith[Response[IO], IO, A] {
@@ -29,9 +37,12 @@ object ContCodecHandler extends
       gb <- k((reqMeta, req))
       (resMeta, b) = gb
       resR <- ContT.lift {
-        IO.delay {
-          encodeB(b)
-        }
+        for {
+          r <- IO.delay {
+            encodeB(b)
+          }
+          _ <- logger.info(s"Sending: $r")
+        } yield r
       }
     } yield (resMeta, resR)
   }

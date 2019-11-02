@@ -2,6 +2,7 @@
 Command line entrypoint
  -}
 {-# LANGUAGE ApplicativeDo     #-}
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
@@ -29,7 +30,8 @@ import           Gugugu.Lang.Typescript
 -- | The command line entrypoint
 guguguTypescriptMain :: IO ()
 guguguTypescriptMain = runExceptIO $ do
-  GuguguCmdOption{..} <- execParser' optParser
+  let version = "Gugugu TypeScript " <> CURRENT_PACKAGE_VERSION
+  GuguguCmdOption{..} <- execParser' optParser version
   modules <- loadAllModules inputDir
   fs <- makeFiles opts modules
   liftIO $ do

@@ -4,6 +4,7 @@ Parser types
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData      #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Gugugu.Parser.Types
   (
   -- * Parsing Environment
@@ -29,11 +30,16 @@ module Gugugu.Parser.Types
   , RecordCon(..)
   , RecordField(..)
   , TypeExpr(..)
+  , typeExprParams
+  -- ** Pragmas
+  , PragmaToData(..)
+  , ForeignPragma(..)
 
   -- * Utilities required by the parser
   , popLayoutContext
   ) where
 
+import           Control.Lens.TH
 import           Control.Monad.Except
 import           Control.Monad.State
 import           Data.Functor.Identity
@@ -142,6 +148,10 @@ data Token
   | TvSemi              -- ^ Virtual token, denoted by double semicolon @;;@
   | TvLBrace            -- ^ Virtual token, denoted by double left brace @{{@
   | TvRBrace            -- ^ Virtual token, denoted by double right brace @}}@
+
+  | TPForeign           -- ^ FOREIGN pragma, denoted by @{-# FOREIGN@
+  | TPClose             -- ^ Pragma end, denoted by @#-}@
+  | TPComp Text         -- ^ Component of pragma
   deriving Show
 
 
@@ -162,6 +172,11 @@ data ModuleDec
     }
   deriving Show
 
+-- | Import statement
+--
+-- @
+-- import 'importStmtModuleName'
+-- @
 newtype ImportStmt
   = ImportStmt
     { importStmtModuleName :: Text
@@ -178,12 +193,13 @@ data Dec
 -- | Data declaration
 --
 -- @
--- data 'dataDecName' = 'dataDecDef'
+-- data 'dataDecName' 'dataDecPragmas' = 'dataDecDef'
 -- @
 data DataDec
   = DataDec
-    { dataDecName :: Text
-    , dataDecDef  :: DataCon
+    { dataDecName    :: Text
+    , dataDecPragmas :: [PragmaToData]
+    , dataDecDef     :: Maybe DataCon
     }
   deriving Show
 
@@ -237,12 +253,27 @@ data RecordField
 -- | Type expression
 --
 -- @
--- 'typeExprFirst' 'typeExprParams'
+-- 'typeExprFirst' '_typeExprParams'
 -- @
 data TypeExpr
   = TypeExpr
-    { typeExprFirst  :: Text
-    , typeExprParams :: [TypeExpr]
+    { typeExprFirst   :: Text
+    , _typeExprParams :: [TypeExpr]
+    }
+  deriving Show
+
+
+-- | Pragma applied to 'DataDec'
+newtype PragmaToData
+  = PDForeign ForeignPragma
+  deriving Show
+
+
+-- | Foreign Pragma
+data ForeignPragma
+  = ForeignPragma
+    { foreignPragmaTarget  :: Text
+    , foreignPragmaContent :: Text
     }
   deriving Show
 
@@ -256,3 +287,6 @@ popLayoutContext = do
   case psLayoutContext of
     []      -> throwError "layout expected but no layout available"
     _ : lcs -> put s{ psLayoutContext = lcs }
+
+
+makeLenses ''TypeExpr

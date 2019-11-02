@@ -15,6 +15,7 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifoldable
 import           Data.Bifunctor
+import           Data.Either
 import           Data.Foldable
 import           Data.List.NonEmpty            (NonEmpty (..))
 import qualified Data.List.NonEmpty            as NonEmpty
@@ -24,6 +25,7 @@ import           Data.Text                     (Text)
 import qualified Data.Text                     as T
 import           Data.Traversable
 import           System.FilePath
+import           Text.Printf
 
 import           Gugugu.Resolver
 import           Gugugu.Utilities
@@ -72,10 +74,10 @@ makeModules :: MonadError String m
             => GuguguScalaOption
             -> [Module]
             -> m (Map FilePath CompilationUnit)
-makeModules opts modules = do
+makeModules opts@GuguguScalaOption{..} modules = do
   let moduleMap = Map.fromList $
         fmap (\md@Module{..} -> (moduleName, md)) modules
-  filesMaps <- for modules $ \md@Module{..} -> do
+  foreignCodecPartsAndFilesMaps <- for modules $ \md@Module{..} -> do
     let rCtx = ResolutionContext
           { rcModules       = moduleMap
           , rcCurrentModule = md
@@ -85,21 +87,70 @@ makeModules opts modules = do
           , gsCtx  = rCtx
           }
     runReaderT (makeModule md) env
-  pure $ Map.unions filesMaps
+  let (((encodeImpls, decodeImpls), (encodes, decodes)), filesWithoutForeign) =
+        fold foreignCodecPartsAndFilesMaps
+  let allFiles      = if withCodec
+        then filesWithoutForeign <> foreignCodecs else filesWithoutForeign
+      foreignCodecs = Map.fromList
+        [ f "ForeignEncoders" [] encodes
+        , f "ForeignDecoders" [] decodes
+        , f "ForeignEncodersImpl" ["S"] encodeImpls
+        , f "ForeignDecodersImpl" ["S"] decodeImpls
+        ]
+        where
+          f name ts content = (path, cu)
+            where
+              path = codecDir </> (name <> ".scala")
+              cu   = CompilationUnit
+                { cuPackage = QualId codecPkgId
+                , cuPkgImports = []
+                , cuTopStats =
+                  [ TST TraitDef
+                      { tdModifiers = []
+                      , tdName      = T.pack name
+                      , tdTParams   = ts
+                      , tdBody      = content
+                      }
+                  ]
+                }
+      codecPkgId    = guguguCodecPkg opts
+      codecDir      = pkgDir codecPkgId
+  pure allFiles
 
-makeModule :: GuguguK r m => Module -> m (Map FilePath CompilationUnit)
+type Pair a = (a, a)
+type ForeignTypeResult = Pair (Pair [TemplateStat])
+
+makeModule :: GuguguK r m
+           => Module
+           -> m (ForeignTypeResult, (Map FilePath CompilationUnit))
 makeModule md@Module{..} = do
   GuguguScalaOption{..} <- asks toGuguguScalaOption
-  pairs <- traverse (makeData md) moduleDatas
+  dataParts <- traverse (makeData md) moduleDatas
+  let (foreignCodecParts, pairs) = partitionEithers dataParts
   tPair <- if (withServer || withClient) && not (null moduleFuncs)
     then Just <$> makeTransport md else pure Nothing
-  pure $ Map.fromList $ toList tPair <> pairs
+  pure (fold foreignCodecParts, Map.fromList $ toList tPair <> pairs)
 
-makeData :: GuguguK r m => Module -> Data -> m (FilePath, CompilationUnit)
-makeData md@Module{..} d@Data{..} = do
+makeData :: GuguguK r m
+         => Module
+         -> Data
+         -> m (Either ForeignTypeResult (FilePath, CompilationUnit))
+makeData md d@Data{..} = do
+  GuguguScalaOption{..} <- asks toGuguguScalaOption
+  case dataConDef of
+    Just x  -> Right <$> makeGuguguData md d x
+    Nothing -> Left <$>
+      if withCodec then makeForeignDataCodecStats md d else pure mempty
+
+makeGuguguData :: GuguguK r m
+               => Module
+               -> Data
+               -> DataCon
+               -> m (FilePath, CompilationUnit)
+makeGuguguData md@Module{..} d@Data{..} dataCon = do
   GuguguScalaOption{..} <- asks toGuguguScalaOption
   dataCode <- mkTypeCode d
-  (typeDef, maybeObjWithoutCodec) <- case dataConDef of
+  (typeDef, maybeObjWithoutCodec) <- case dataCon of
     DRecord RecordCon{..} -> do
       params <- for recordConFields $ \rf@RecordField{..} -> do
         scalaType <- makeType recordFieldType
@@ -138,7 +189,8 @@ makeData md@Module{..} d@Data{..} = do
             }
       pure (TST traitDef, Just objectDef)
 
-  codecStats <- if withCodec then makeCodecStats d else pure []
+  codecStats <- if withCodec
+    then biList <$> makeCodecStats md d else pure []
 
   moduleCode <- mkModuleCode md
 
@@ -160,8 +212,8 @@ makeData md@Module{..} d@Data{..} = do
             }
   pure (path, compilationUnit)
 
-makeCodecStats :: GuguguK r m => Data -> m [TemplateStat]
-makeCodecStats d@Data{..} = do
+makeCodecStats :: GuguguK r m => Module -> Data -> m (Pair TemplateStat)
+makeCodecStats md d@Data{..} = do
   codecPkg <- asks guguguCodecPkg
   dataCode <- mkTypeCode d
   let eImpl         = eSimple "impl"
@@ -169,11 +221,11 @@ makeCodecStats d@Data{..} = do
       decoderTypeId = codecPkgId "Decoder"
       eS            = eSimple "s"
       eA            = eSimple "a"
-      -- scala type of this type
-      tThis         = tSimple dataCode
       codecPkgId n  = StableId $ codecPkg <> (n :| [])
+  -- scala type of this type
+  tThis <- (\i -> TParamed i []) <$> resolveScalaType dataName
   (encodeFDef, decodeFDef) <- case dataConDef of
-    DRecord RecordCon{..} -> do
+    Just (DRecord RecordCon{..}) -> do
       let eEncodeRecordField = eImpl `EMember` "encodeRecordField"
           eDecodeRecordField = eImpl `EMember` "decodeRecordField"
           eEncoderObj        = ESimple encoderTypeId
@@ -220,7 +272,7 @@ makeCodecStats d@Data{..} = do
           eSl        = eSimple $ "s" <> showText (nFields + 1)
           nFields    = length recordConFields
       pure (encodeFDef, decodeFDef)
-    DEnum names           -> do
+    Just (DEnum names)           -> do
       codecCases <- for (indexed $ toList names) $ \(i, name) -> do
         enumCode <- mkEnumCode name
         enumValue <- mkEnumValue name
@@ -242,6 +294,11 @@ makeCodecStats d@Data{..} = do
               fMatchD arg selector = eAnon1 arg $ EMatch (eSimple arg) $
                 fmap (first selector) decodeCases <> errorCases
               errorCases           = [(PSimple "_", eSimple "None")]
+      pure (encodeFDef, decodeFDef)
+    Nothing                      -> do
+      let encodeFDef         = ECall (eImpl `EMember` encodeF) [eS, eA]
+          decodeFDef         = ECall (eImpl `EMember` decodeF) [eS]
+          (encodeF, decodeF) = foreignCodecName md d
       pure (encodeFDef, decodeFDef)
   let encoderDef = PatDef
         { pdModifiers = [MImplicit]
@@ -292,7 +349,33 @@ makeCodecStats d@Data{..} = do
         }
       tS         = tSimple "S"
 
-  pure [TMSV encoderDef, TMSV decoderDef]
+  pure (TMSV encoderDef, TMSV decoderDef)
+
+makeForeignDataCodecStats :: GuguguK r m
+                          => Module
+                          -> Data
+                          -> m ForeignTypeResult
+makeForeignDataCodecStats md@Module{..} d@Data{..} = do
+  tThis <- (\i -> TParamed i []) <$> resolveForeign' d
+  let encodeImpl         = TMSD FunDcl
+        { fdModifiers = []
+        , fdName      = encodeF
+        , fdTParams   = []
+        , fdParams    = [pS, Param{ pName = "v", pType = tThis }]
+        , fdRType     = tS
+        }
+      decodeImpl         = TMSD FunDcl
+        { fdModifiers = []
+        , fdName      = decodeF
+        , fdTParams   = []
+        , fdParams    = [pS]
+        , fdRType     = TTuple $ tS :| [tThis]
+        }
+      (encodeF, decodeF) = foreignCodecName md d
+      tS                 = tSimple "S"
+      pS                 = Param{ pName = "s", pType = tS }
+  (encode, decode) <- makeCodecStats md d
+  pure (([encodeImpl], [decodeImpl]), ([encode], [decode]))
 
 makeTransport :: GuguguK r m => Module -> m (FilePath, CompilationUnit)
 makeTransport md@Module{..} = do
@@ -479,11 +562,15 @@ resolveScalaType t = do
   rr <- resolveTypeCon t
   case rr of
     ResolutionError e -> throwError e
-    LocalType d       -> iSimple <$> mkTypeCode d
-    Imported md d     -> do
-      pkg <- mkModuleCode md
-      typeName <- mkTypeCode d
-      pure $ StableId $ pkg <> (typeName :| [])
+    LocalType d       -> case dataConDef d of
+      Nothing -> resolveForeign' d
+      Just _  -> iSimple <$> mkTypeCode d
+    Imported md d     -> case dataConDef d of
+      Nothing -> resolveForeign' d
+      Just _ -> do
+        pkg <- mkModuleCode md
+        typeName <- mkTypeCode d
+        pure $ StableId $ pkg <> (typeName :| [])
     Primitive pt      -> pure $ iSimple $ case pt of
       PUnit   -> "Unit"
       PBool   -> "Boolean"
@@ -492,6 +579,16 @@ resolveScalaType t = do
       PString -> "String"
       PMaybe  -> "Option"
       PList   -> "Vector"
+
+resolveForeign :: Data -> Maybe StableId
+resolveForeign Data{..} = iSimple <$> Map.lookup thisTarget dataForeignMap
+-- It is expected to be a qualified name, but keep it simple
+
+resolveForeign' :: GuguguK r m => Data -> m StableId
+resolveForeign' d@Data{..} = case resolveForeign d of
+  Just v  -> pure v
+  Nothing -> throwError $ printf
+      "Type %s does not have foreign pragma" dataName
 
 pkgDir :: NonEmpty Text -> FilePath
 pkgDir (part1 :| parts) = foldl' (\z t -> z </> T.unpack t)
@@ -545,6 +642,9 @@ mkEnumValue name = withTransformer transEnumValue $ \f ->
 
 -- Utilities
 
+thisTarget :: Text
+thisTarget = "scala"
+
 guguguCodecPkg :: HasGuguguScalaOption r => r -> NonEmpty Text
 guguguCodecPkg r =
   let GuguguScalaOption{..} = toGuguguScalaOption r
@@ -554,6 +654,11 @@ guguguTransportPkg :: HasGuguguScalaOption r => r -> NonEmpty Text
 guguguTransportPkg r =
   let GuguguScalaOption{..} = toGuguguScalaOption r
   in NonEmpty.fromList $ runtimePkg <> ["transport"]
+
+foreignCodecName :: Module -> Data -> (Text, Text)
+foreignCodecName Module{..} Data{..} = ("encode" <> qName, "decode" <> qName)
+  where qName = if moduleName == "Foreign"
+          then dataName else moduleName <> dataName
 
 iSimple :: Text -> StableId
 iSimple t = StableId $ t :| []
@@ -592,6 +697,9 @@ withTransformer selector k = do
 
 instance HasGuguguScalaOption GuguguScalaEnv where
   toGuguguScalaOption = gsOpts
+
+instance HasGuguguScalaOption GuguguScalaOption where
+  toGuguguScalaOption = id
 
 instance HasResolutionContext GuguguScalaEnv where
   toResolutionContext = gsCtx

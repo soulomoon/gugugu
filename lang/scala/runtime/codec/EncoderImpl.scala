@@ -1,4 +1,4 @@
-trait EncoderImpl[S, R] {
+trait EncoderImpl[S, R] extends ForeignEncodersImpl[S] {
   def encodeWithState(k: S => S): R
 
   def encodeUnit(s: S, v: Unit): S

@@ -1,7 +1,8 @@
 {
-{-# OPTIONS_HADDOCK hide     #-}
-{-# LANGUAGE BangPatterns    #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_HADDOCK hide       #-}
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 module Gugugu.Parser.Lexer
   ( lexToken
   ) where
@@ -11,6 +12,8 @@ import           Control.Monad.State
 import qualified Data.ByteString      as B
 import           Data.List.NonEmpty   (NonEmpty (..), (<|))
 import qualified Data.List.NonEmpty   as NonEmpty
+import           Data.Map.Strict      (Map)
+import qualified Data.Map.Strict      as Map
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as T
@@ -28,6 +31,9 @@ $lower = a-z
 $white_no_nl = $white # \n
 
 $alphanumu = [_ $upper $lower $digit]
+
+$pragmachar = [_ $upper]
+$non_white = \!-\~
 
 @upperident = $upper $alphanumu*
 @lowerident = [_ $lower] $alphanumu*
@@ -70,6 +76,15 @@ $white_no_nl+                           ;
   "}"                                   { simple TRBrace }
   "("                                   { simple TLParen }
   ")"                                   { simple TRParen }
+
+  "{-#" $white* $pragmachar+
+    / { knownPragma }                   { dispatchPragmas }
+}
+
+<prag> {
+  \n                                    ;
+  "#-}"                                 { simple TPClose }
+  $non_white+                           { simpleString TPComp }
 }
 
 {
@@ -103,17 +118,14 @@ type AlexAction = AlexInput -> Int -> P Token
 simple :: Token -> AlexAction
 simple t _ _ = do
   case t of
-    TWhere -> pushLexState layout
-    _      -> pure ()
+    TWhere  -> pushLexState layout
+    TPClose -> void popLexState
+    _       -> pure ()
   pure t
 
 simpleString :: (Text -> Token) -> AlexAction
-simpleString f input len = do
-  let token  = f $ T.unfoldrN len nth offset
-      nth i  = Just (V.unsafeIndex src i, i + 1)
-      src    = pSrc input
-      offset = slOffset . pLoc $ input
-  pure token
+simpleString f input len =
+  pure . f $ unsafeTakeString len input
 
 doBol :: AlexAction
 doBol _ _ = do
@@ -147,7 +159,41 @@ newLexState n _ _ = do
   lexToken
 
 
+-- Pragmas
+
+knownPragma :: AlexAccPred ()
+knownPragma _ input len _ =
+  let s = cleanPragma $ unsafeTakeString len input
+  in Map.member s pragmas
+
+dispatchPragmas :: AlexAction
+dispatchPragmas input len = do
+  let s = cleanPragma $ unsafeTakeString len input
+  case Map.lookup s pragmas of
+    Nothing     -> throwError "unknown pragma"
+    Just action -> do
+      pushLexState prag
+      action input len
+
+pragmas :: Map Text AlexAction
+pragmas = Map.fromList
+  [ ( "FOREIGN"
+    , simple TPForeign
+    )
+  ]
+
+cleanPragma :: Text -> Text
+cleanPragma = T.unwords . drop 1 . T.words
+
+
 -- Utilities
+
+unsafeTakeString :: Int -> AlexInput -> Text
+unsafeTakeString len input =
+  let nth i  = Just (V.unsafeIndex src i, i + 1)
+      src    = pSrc input
+      offset = slOffset . pLoc $ input
+  in T.unfoldrN len nth offset
 
 setInput :: AlexInput -> P ()
 setInput p = do

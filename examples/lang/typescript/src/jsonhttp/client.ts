@@ -1,4 +1,5 @@
 import * as http from "http";
+import * as moment from "moment";
 import {
   QualName,
   WithMeta,
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
     op: "Add",
   }, client.fold);
   await doRequest(10, client.calculateFibs);
+  const now = moment();
+  await doRequest(now, client.incrOneDay);
 }
 
 
@@ -65,11 +68,13 @@ class HttpClientTransport
       }, async res => {
         const resMeta = headersToMeta(res.headers);
         const body = await readAllAsUtf8String(res);
+        console.log("Got data: " + body);
         resolve({
           meta: resMeta,
           data: body,
         });
       });
+      console.log("Sending: " + payload);
       req.write(payload);
       req.end();
     });

@@ -1,4 +1,4 @@
-trait DecoderImpl[S, R] {
+trait DecoderImpl[S, R] extends ForeignDecodersImpl[S] {
   def decodeWithState[A](r: R, k: S => (S, A)): A
 
   def decodeUnit(s: S): (S, Unit)

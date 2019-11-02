@@ -2,7 +2,7 @@ trait Decoder[A] {
   def decode[S, R](s: S, impl: DecoderImpl[S, R]): (S, A)
 }
 
-object Decoder {
+object Decoder extends ForeignDecoders {
   def apply[A](implicit decoder: Decoder[A]): Decoder[A] = decoder
   def decode[S, R, A](r: R, impl: DecoderImpl[S, R])
                      (implicit decoder: Decoder[A]): A = {
