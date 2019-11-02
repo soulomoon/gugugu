@@ -20,4 +20,5 @@ library:
     - mtl
     - text
 
+    - lens
     - vector

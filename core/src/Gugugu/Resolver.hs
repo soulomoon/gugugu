@@ -74,8 +74,9 @@ data Module
 -- | Data type
 data Data
   = Data
-    { dataName   :: Text
-    , dataConDef :: Maybe DataCon
+    { dataName       :: Text
+    , dataForeignMap :: Map Text Text
+    , dataConDef     :: Maybe DataCon
     -- ^ Foreign data type does not have constructor
     }
   deriving Show
@@ -202,6 +203,11 @@ resolveDataDec P.DataDec{..} = do
     Just (DRecord RecordCon{..}) | dataDecName /= recordConName ->
       Left "unmatched type name and data constructor name"
     _                                                           -> pure ()
+  let dataForeignMap = foldl' f Map.empty dataDecPragmas
+        where
+          f z p = case p of
+            P.PDForeign P.ForeignPragma{..} -> Map.insert
+              foreignPragmaTarget foreignPragmaContent z
   pure Data{ dataName = dataDecName, .. }
 
 resolveFuncDec :: P.FuncDec -> Either String Func
@@ -229,7 +235,7 @@ resolveRecordField P.RecordField{..} = do
 
 resolveTypeExpr :: P.TypeExpr -> Either String GType
 resolveTypeExpr P.TypeExpr{..} = do
-  typeParams <- traverse resolveTypeExpr typeExprParams
+  typeParams <- traverse resolveTypeExpr _typeExprParams
   pure GApp{ typeCon = typeExprFirst, .. }
 
 

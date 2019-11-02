@@ -5,6 +5,7 @@ module Gugugu.Parser.Parser
   ( parseModuleDec
   ) where
 
+import           Control.Lens.Setter
 import           Control.Monad
 import           Control.Monad.Except
 import           Data.List
@@ -48,6 +49,10 @@ import           Gugugu.Parser.Types
   "}}"                                  { TvRBrace }
   ";;"                                  { TvSemi }
 
+  "{-# FOREIGN"                         { TPForeign }
+  "#-}"                                 { TPClose }
+  pComp                                 { TPComp $$ }
+
 %%
 
 moduleDec :: { ModuleDec }
@@ -64,7 +69,7 @@ moduleDec : "module" conid "where"
 
 imports :: { [ImportStmt] }
 imports   : {- empty -}                 { [] }
-          | imports importStmt          { $1 ++ [ $2 ] }
+          | imports importStmt          { $1 `snocList` $2 }
 
 importStmt :: { ImportStmt }
 importStmt: "import" conid ";;"         { ImportStmt
@@ -74,7 +79,7 @@ importStmt: "import" conid ";;"         { ImportStmt
 
 body :: { [Dec] }
 body      : {- empty -}                 { [] }
-          | body dec                    { $1 <> [ $2 ] }
+          | body dec                    { $1 `snocList` $2 }
 
 dec :: { Dec }
 dec       : dataDec                     { DData $1 }
@@ -83,9 +88,11 @@ dec       : dataDec                     { DData $1 }
 
 dataDec :: { DataDec }
 dataDec   : "data" conid
+              dataPragmas
               maybeDataCon ";;"         { DataDec
-                                          { dataDecName = $2
-                                          , dataDecDef  = $3
+                                          { dataDecName    = $2
+                                          , dataDecPragmas = $3
+                                          , dataDecDef     = $4
                                           }
                                         }
 
@@ -115,8 +122,7 @@ enumCons  : conid                       { $1 :| [] }
           | enumCons "|" conid          { $1 <> ( $3 :| [] )  }
 
 recordCon :: { RecordCon }
-recordCon
-          : conid
+recordCon : conid
               "{" recordFields "}"      { RecordCon
                                           { recordConName   = $1
                                           , recordConFields = $3
@@ -127,7 +133,7 @@ recordFields :: { [RecordField] }
 recordFields
           : recordField                 { [ $1 ] }
           | recordFields
-              "," recordField           { $1 <> [ $3 ] }
+              "," recordField           { $1 `snocList` $3 }
 
 recordField :: { RecordField }
 recordField
@@ -139,26 +145,32 @@ recordField
 
 
 typeExpr :: { TypeExpr }
-typeExpr  : conid                       { TypeExpr
-                                          { typeExprFirst  = $1
-                                          , typeExprParams = []
-                                          }
+typeExpr  : conid                       { simpleType $1 }
+          | typeExpr conid              { typeExprParams
+                                            %~ (`snocList` simpleType $2 )
+                                            $ $1
                                         }
-          | typeExpr conid              { TypeExpr
-                                          { typeExprFirst  = typeExprFirst $1
-                                          , typeExprParams =
-                                              typeExprParams $1 <>
-                                                [ TypeExpr
-                                                  { typeExprFirst  = $2
-                                                  , typeExprParams = []
-                                                  }
-                                                ]
-                                          }
+          | typeExpr "(" typeExpr ")"   { typeExprParams
+                                            %~ (`snocList` $3 )
+                                            $ $1
                                         }
-          | typeExpr "(" typeExpr ")"   { TypeExpr
-                                            { typeExprFirst  = typeExprFirst $1
-                                            , typeExprParams =
-                                                typeExprParams $1 <> [ $3 ]
+
+
+dataPragmas :: { [PragmaToData] }
+dataPragmas
+          : {- empty -}                 { [] }
+          | dataPragmas dataPragma      { $1 `snocList` $2 }
+
+dataPragma :: { PragmaToData }
+dataPragma: foreignPragma               { PDForeign $1 }
+
+foreignPragma :: { ForeignPragma }
+foreignPragma
+          : "{-# FOREIGN"
+              pComp pComp
+            "#-}"                       { ForeignPragma
+                                            { foreignPragmaTarget  = $2
+                                            , foreignPragmaContent = $3
                                             }
                                         }
 
@@ -175,5 +187,15 @@ lexer k = lexToken >>= k
 
 parseError :: Token -> P a
 parseError t = throwError $ "Parse Error: " <> show t
+
+
+simpleType :: Text -> TypeExpr
+simpleType name = TypeExpr
+  { typeExprFirst   = name
+  , _typeExprParams = []
+  }
+
+snocList :: [a] -> a -> [a]
+snocList xs x = xs <> [x]
 
 }
