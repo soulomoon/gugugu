@@ -4,6 +4,9 @@ import {
   ServerResponse,
 } from "http";
 import {
+  Moment,
+} from "moment";
+import {
   QualName,
   WithMeta,
   ServerCodecHandler,
@@ -146,6 +149,12 @@ class HelloServerImpl implements HelloServer<Metadata, Metadata> {
       return {
         entries: rv,
       };
+    });
+  }
+
+  public incrOneDay(a: Moment, meta: Metadata): Promise<WithMeta<Metadata, Moment>> {
+    return this.withMeta(a, meta, async t => {
+      return t.clone().add(1, "days");
     });
   }
 

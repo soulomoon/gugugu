@@ -1,4 +1,5 @@
 import * as http from "http";
+import * as moment from "moment";
 import {
   QualName,
   WithMeta,
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
     op: "Add",
   }, client.fold);
   await doRequest(10, client.calculateFibs);
+  const now = moment();
+  await doRequest(now, client.incrOneDay);
 }
 
 

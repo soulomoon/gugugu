@@ -1,5 +1,6 @@
 module Hello where
 
+import Foreign
 import HelloTypes
 
 
@@ -18,3 +19,5 @@ data AssociatedList
     }
 
 calculateFibs :: Int32 -> IO AssociatedList
+
+incrOneDay :: DateTime -> IO DateTime
