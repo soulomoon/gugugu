@@ -1,5 +1,8 @@
 package guguguexamples.codec
 
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
 import gugugu.lang.scala.runtime.codec._
 import io.circe.Json
 
@@ -206,6 +209,19 @@ object JsonCodecImpl
       case Some(a) => (s1, a)
       case None => throw new CodecException("cannot read Enum")
     }
+  }
+
+  private val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+  override def encodeDateTime(s: JsonCursor, v: LocalDateTime): JsonCursor = {
+    val dateTimeS = v.format(formatter)
+    encodeString(s, dateTimeS)
+  }
+
+  override def decodeDateTime(s: JsonCursor): (JsonCursor, LocalDateTime) = {
+    val (s2, dateTimeS) = decodeString(s)
+    val dateTime = LocalDateTime.parse(dateTimeS, formatter)
+    (s2, dateTime)
   }
 
 }

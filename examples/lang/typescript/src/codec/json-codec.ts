@@ -1,3 +1,7 @@
+import * as moment from "moment";
+import {
+  Moment
+} from "moment";
 import {
   EncoderImpl,
   DecoderImpl,
@@ -258,6 +262,17 @@ export class JsonCodecImpl implements EncoderImpl<JsonCursor, JsonRepr>
       throw new CodecError("cannot read Enum");
     }
     return [s1, a];
+  }
+
+  private readonly format = "YYYY-MM-DDTHH:mm:ss"
+
+  public encodeDateTime(s: JsonCursor, a: Moment): JsonCursor {
+    return this.encodeString(s, a.format(this.format));
+  }
+  public decodeDateTime(s: JsonCursor): [JsonCursor, Moment] {
+    const [s2, dateTimeS] = this.decodeString(s);
+    const dateTime = moment(dateTimeS, this.format, true);
+    return [s2, dateTime];
   }
 
 }
