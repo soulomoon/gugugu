@@ -46,6 +46,7 @@ https://bitbucket.org/Cosmius/gugugu/downloads/
    :caption: Contents:
 
    installation
+   syntax
 
 
 Indices and tables
