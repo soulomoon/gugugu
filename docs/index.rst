@@ -45,6 +45,8 @@ https://bitbucket.org/Cosmius/gugugu/downloads/
    :maxdepth: 2
    :caption: Contents:
 
+   installation
+
 
 Indices and tables
 ==================
