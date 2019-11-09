@@ -43,10 +43,19 @@ https://bitbucket.org/Cosmius/gugugu/downloads/
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Contents
 
    installation
    syntax
+
+Targets
+-------
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Targets
+
+   lang/scala
 
 
 Indices and tables
