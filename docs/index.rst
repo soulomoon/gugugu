@@ -56,6 +56,7 @@ Targets
    :caption: Targets
 
    lang/scala
+   lang/typescript
 
 
 Indices and tables
