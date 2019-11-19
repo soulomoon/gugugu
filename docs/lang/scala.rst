@@ -183,7 +183,7 @@ For a ``DecoderImpl.decodeWithState``, you usually should
 
 * Transform the ``R`` into an initial state ``S``
 * Feed it to the function provided
-* Make sure the returned state does not go wrong
+* Make sure the returned state did not go wrong
 * Return the decoded value returned by the function provided.
 
 The generated encoders/decoders are designed to be compatible with
