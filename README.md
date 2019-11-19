@@ -28,6 +28,7 @@ data Operation
   | Mul
 ```
 
+
 ## Build Status
 
 |  All    |       | [![Build Status](https://dev.azure.com/cosmiafu/gugugu/_apis/build/status/gugugu?branchName=master)](https://dev.azure.com/cosmiafu/gugugu/_build) |
@@ -35,3 +36,8 @@ data Operation
 | Linux   | amd64 | ![Linux Status](https://dev.azure.com/cosmiafu/gugugu/_apis/build/status/gugugu?branchName=master&jobName=build&configuration=build%20linux)       |
 | macOS   | amd64 | ![macOS Status](https://dev.azure.com/cosmiafu/gugugu/_apis/build/status/gugugu?branchName=master&jobName=build&configuration=build%20darwin)      |
 | Windows | amd64 | ![Windows Status](https://dev.azure.com/cosmiafu/gugugu/_apis/build/status/gugugu?branchName=master&jobName=build&configuration=build%20win32)     |
+
+
+## Documentation
+
+* [Document on readthedocs](https://gugugu.readthedocs.io/en/latest/)
