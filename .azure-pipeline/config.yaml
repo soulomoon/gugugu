@@ -20,13 +20,13 @@ stages:
           matrix:
             linux:
               vm_image: ubuntu-18.04
-              os_arch: linux-x64
+              os_arch: linux-amd64
             darwin:
               vm_image: macOS-10.14
-              os_arch: darwin-x64
+              os_arch: darwin-amd64
             win32:
               vm_image: windows-2019
-              os_arch: win32-x64
+              os_arch: win32-amd64
         pool:
           vmImage: $(vm_image)
         steps:
