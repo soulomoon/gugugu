@@ -84,7 +84,7 @@ class _Decoder {
 export const Decoder = new _Decoder();
 
 export interface EncoderImpl<S, R> extends ForeignEncodersImpl<S> {
-  encodeWithState(k: (s: S) => S): R
+  encodeWithState(k: (s: S) => S): R;
 
   encodeUnit(s: S, v: {}): S;
   encodeBool(s: S, v: boolean): S;
@@ -110,7 +110,7 @@ export interface EncoderImpl<S, R> extends ForeignEncodersImpl<S> {
 }
 
 export interface DecoderImpl<S, R> extends ForeignDecodersImpl<S> {
-  decodeWithState<A>(r: R, k: (s: S) => [S, A]): A
+  decodeWithState<A>(r: R, k: (s: S) => [S, A]): A;
 
   decodeUnit(s: S): [S, {}];
   decodeBool(s: S): [S, boolean];
