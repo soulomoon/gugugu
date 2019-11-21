@@ -13,17 +13,23 @@ module Gugugu.Lang.Python.SourceUtils
   -- * Expressions
   -- | * https://docs.python.org/3/reference/expressions.html
   , Expr(..)
+  , LambdaExpr(..)
   , ArgumentList(..)
   -- * Simple statements
   -- | * https://docs.python.org/3/reference/simple_stmts.html
   , Target(..)
   , AssignmentStmt(..)
   , AnnotatedAssignmentStmt(..)
+  , ReturnStmt(..)
+  , RaiseStmt(..)
   , ImportStmt(..)
   -- * Compound statements
   -- | * https://docs.python.org/3/reference/compound_stmts.html
   , Suite
+  , TryStmt(..)
+  , FuncDef(..)
   , ClassDef(..)
+  , ParameterList
   -- * Top-level components
   -- | * https://docs.python.org/3/reference/toplevel_components.html
   , FileInput(..)
@@ -89,6 +95,21 @@ data Expr
   | EAttr Expr Identifier
   | ECall Expr ArgumentList
   | ESub Expr [Expr]
+  | ELambda LambdaExpr
+  | EDict [(Expr, Expr)]
+  deriving Show
+
+{-|
+@
+lambda_expr        ::=  "lambda" [parameter_list] ":" expression
+lambda_expr_nocond ::=  "lambda" [parameter_list] ":" expression_nocond
+@
+ -}
+data LambdaExpr
+  = LambdaExpr
+    { leParams :: [Identifier]
+    , leExpr   :: Expr
+    }
   deriving Show
 
 {-|
@@ -132,6 +153,7 @@ augop                     ::=  "+=" | "-=" | "*=" | "@=" | "\/=" | "\/\/=" | "%=
  -}
 data Target
   = TSimple Identifier
+  | TTwo Identifier Identifier
   deriving Show
 
 {-|
@@ -156,6 +178,28 @@ data AnnotatedAssignmentStmt
   = AnnotatedAssignmentStmt
     { aasTarget     :: Target
     , aasAnnotation :: Expr
+    }
+  deriving Show
+
+{-|
+@
+return_stmt ::=  "return" [expression_list]
+@
+ -}
+newtype ReturnStmt
+  = ReturnStmt
+    { rsValues :: [Expr]
+    }
+  deriving Show
+
+{-|
+@
+raise_stmt ::=  "raise" [expression ["from" expression]]
+@
+ -}
+newtype RaiseStmt
+  = RaiseStmt
+    { rsExc :: Expr
     }
   deriving Show
 
@@ -188,6 +232,46 @@ type Suite = [Statement]
 
 {-|
 @
+try_stmt  ::=  try1_stmt | try2_stmt
+try1_stmt ::=  "try" ":" suite
+               ("except" [expression ["as" identifier]] ":" suite)+
+               ["else" ":" suite]
+               ["finally" ":" suite]
+try2_stmt ::=  "try" ":" suite
+               "finally" ":" suite
+@
+ -}
+data TryStmt
+  = TryStmt
+    { tsBody    :: Suite
+    , tsExcepts :: [(Expr, Maybe Identifier, Suite)]
+    , tsElse    :: Maybe Suite
+    , tsFinally :: Maybe Suite
+    }
+  deriving Show
+
+{-|
+@
+funcdef                   ::=  [decorators] "def" funcname "(" [parameter_list] ")"
+                               ["->" expression] ":" suite
+decorators                ::=  decorator+
+decorator                 ::=  "@" dotted_name ["(" [argument_list [","]] ")"] NEWLINE
+dotted_name               ::=  identifier ("." identifier)*
+funcname                  ::=  identifier
+@
+ -}
+data FuncDef
+  = FuncDef
+    { fdDecorators :: [Expr]
+    , fdName       :: Identifier
+    , fdParams     :: ParameterList     -- ^ Pair of name, annotation
+    , fdRType      :: Maybe Expr
+    , fdSuite      :: [Statement]
+    }
+  deriving Show
+
+{-|
+@
 classdef    ::=  [decorators] "class" classname [inheritance] ":" suite
 inheritance ::=  "(" [argument_list] ")"
 classname   ::=  identifier
@@ -201,6 +285,21 @@ data ClassDef
     , cdSuite      :: Suite
     }
   deriving Show
+
+{-|
+Pair of name, annotation
+@
+parameter_list            ::=  defparameter ("," defparameter)* "," "/" ["," [parameter_list_no_posonly]]
+                               | parameter_list_no_posonly
+parameter_list_no_posonly ::=  defparameter ("," defparameter)* ["," [parameter_list_starargs]]
+                               | parameter_list_starargs
+parameter_list_starargs   ::=  "*" [parameter] ("," defparameter)* ["," ["**" parameter [","]]]
+                               | "**" parameter [","]
+parameter                 ::=  identifier [":" expression]
+defparameter              ::=  parameter ["=" expression]
+@
+-}
+type ParameterList = [(Identifier, Maybe Expr)]
 
 
 -- * Top-level components
@@ -254,6 +353,10 @@ stmt_list     ::=  simple_stmt (";" simple_stmt)* [";"]
 data Statement
   = SA AssignmentStmt
   | SAA AnnotatedAssignmentStmt
+  | SR ReturnStmt
+  | SRA RaiseStmt
+  | ST TryStmt
+  | SFD FuncDef
   | SCD ClassDef
   deriving Show
 
@@ -288,6 +391,25 @@ instance SrcComp Expr where
       writeText "["
       forWithComma_ ks writeSrcComp
       writeText "]"
+    ELambda le  -> writeSrcComp le
+    EDict kvs   -> do
+      writeText "{\n"
+      indentBy 4 $ for_ kvs $ \(k, v') -> withNewLine $ do
+        writeSrcComp k
+        writeText ": "
+        writeSrcComp v'
+        writeText ","
+      doIndent
+      writeText "}"
+
+instance SrcComp LambdaExpr where
+  writeSrcComp LambdaExpr{..} = do
+    writeText "lambda"
+    for_ leParams $ \name -> do
+      writeText " "
+      writeText name
+    writeText ": "
+    writeSrcComp leExpr
 
 instance SrcComp ArgumentList where
   writeSrcComp ArgumentList{..} = forWithComma_ alPositional writeSrcComp
@@ -295,7 +417,11 @@ instance SrcComp ArgumentList where
 
 instance SrcComp Target where
   writeSrcComp v = case v of
-    TSimple t -> writeText t
+    TSimple t  -> writeText t
+    TTwo t1 t2 -> do
+      writeText t1
+      writeText ", "
+      writeText t2
 
 instance SrcComp AssignmentStmt where
   writeSrcComp AssignmentStmt{..} = withNewLine $ do
@@ -308,6 +434,16 @@ instance SrcComp AnnotatedAssignmentStmt where
     writeSrcComp aasTarget
     writeText ": "
     writeSrcComp aasAnnotation
+
+instance SrcComp ReturnStmt where
+  writeSrcComp ReturnStmt{..} = withNewLine $ do
+    writeText "return "
+    forWithComma_ rsValues writeSrcComp
+
+instance SrcComp RaiseStmt where
+  writeSrcComp RaiseStmt{..} = withNewLine $ do
+    writeText "raise "
+    writeSrcComp rsExc
 
 instance SrcComp ImportStmt where
   writeSrcComp v = withNewLine $ case v of
@@ -322,6 +458,47 @@ instance SrcComp ImportStmt where
       writeText " import "
       forWithComma_ items writeText
 
+
+instance SrcComp TryStmt where
+  writeSrcComp TryStmt{..} = do
+    withNewLine $ writeText "try:"
+    writeSuite tsBody
+    for_ tsExcepts $ \(excT, mExcB, excBody) -> do
+      withNewLine $ do
+        writeText "except "
+        writeSrcComp excT
+        for_ mExcB $ \excB -> do
+          writeText " as "
+          writeText excB
+        writeText ":"
+      writeSuite excBody
+    for_ tsElse $ \suite -> do
+      withNewLine $ writeText "else:"
+      writeSuite suite
+    for_ tsFinally $ \suite -> do
+      withNewLine $ writeText "finally:"
+      writeSuite suite
+
+instance SrcComp FuncDef where
+  writeSrcComp FuncDef{..} = do
+    for_ fdDecorators $ \d -> withNewLine $ do
+      writeText "@"
+      writeSrcComp d
+    withNewLine $ do
+      writeText "def "
+      writeText fdName
+      writeText "("
+      forWithComma_ fdParams $ \(name, mAnno) -> do
+        writeText name
+        for_ mAnno $ \anno -> do
+          writeText ": "
+          writeSrcComp anno
+      writeText ")"
+      for_ fdRType $ \rt -> do
+        writeText " -> "
+        writeSrcComp rt
+      writeText ":"
+    writeSuite fdSuite
 
 instance SrcComp ClassDef where
   writeSrcComp ClassDef{..} = do
@@ -350,4 +527,8 @@ instance SrcComp Statement where
   writeSrcComp v = case v of
     SA c  -> writeSrcComp c
     SAA c -> writeSrcComp c
+    SR c  -> writeSrcComp c
+    SRA c -> writeSrcComp c
+    ST c  -> writeSrcComp c
+    SFD c -> writeSrcComp c
     SCD c -> writeSrcComp c

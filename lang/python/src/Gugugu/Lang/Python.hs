@@ -6,24 +6,29 @@ Python target
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
+{-# LANGUAGE TupleSections     #-}
 module Gugugu.Lang.Python
   ( GuguguPythonOption(..)
   , makeFiles
   ) where
 
+import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifunctor
 import           Data.Foldable
+import qualified Data.List                      as List
 import           Data.List.NonEmpty             (NonEmpty (..))
 import qualified Data.List.NonEmpty             as NonEmpty
 import           Data.Map.Strict                (Map)
 import qualified Data.Map.Strict                as Map
+import           Data.Maybe
 import           Data.Set                       (Set)
 import qualified Data.Set                       as Set
 import           Data.Text                      (Text)
 import qualified Data.Text                      as T
 import           Data.Traversable
+import           Data.Tuple
 import           System.FilePath
 import           Text.Printf
 
@@ -37,6 +42,8 @@ import           Gugugu.Lang.Python.SourceUtils
 data GuguguPythonOption
   = GuguguPythonOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
+    , runtimePkg       :: [Text]                  -- ^ Runtime module
+    , withCodec        :: Bool                    -- ^ True if generate codec
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -65,6 +72,8 @@ data GuguguPythonEnv
 class HasGuguguPythonOption a where
   toGuguguPythonOption :: a -> GuguguPythonOption
 
+type ForeignTypeResult = (Set ImportStmt, ([Statement], [Statement]))
+type ImportsAndForeign = (Set ImportStmt, ForeignTypeResult)
 
 makeModules :: MonadError String m
             => GuguguPythonOption
@@ -73,7 +82,7 @@ makeModules :: MonadError String m
 makeModules opts@GuguguPythonOption{..} modules = do
   let moduleMap = Map.fromList $
         fmap (\md@Module{..} -> (moduleName, md)) modules
-  files <- for modules $ \md@Module{..} -> do
+  foreignsAndFiles <- for modules $ \md@Module{..} -> do
     let rCtx = ResolutionContext
           { rcModules       = moduleMap
           , rcCurrentModule = md
@@ -83,35 +92,71 @@ makeModules opts@GuguguPythonOption{..} modules = do
           , gCtx  = rCtx
           }
     runReaderT (makeModule md) env
+  let (foreigns, files) = unzip foreignsAndFiles
+  let (iForeign, (encodeImpls, decodeImpls)) = fold foreigns
+  let (iTyping, mTyping) = importModule $ "typing" :| []
+      (iAbc, eAbc)       = importItem $ "abc" :| ["ABC"]
   let allFiles      = Map.fromList $
            [(pkgPath, pkgModule)]
+        <> [(foreignPath, foreignModule) | withCodec]
         <> files
+      foreignModule = FileInput
+        { fiImports = importAnn : Set.toAscList (iForeign <> iTyping <> iAbc)
+        , fiContent =
+            [ SA AssignmentStmt
+                { asTarget = TSimple "S"
+                , asValue  = mTyping `EAttr` "TypeVar"
+                    `eCall` [ESimple $ unsafeQuote "S"]
+                }
+            , f "ForeignEncodersImpl" encodeImpls
+            , f "ForeignDecodersImpl" decodeImpls
+            ]
+        }
+      foreignPath   = modPath runtimePkg "foreign"
       pkgModule     = FileInput
         { fiImports = [importAnn]
         , fiContent = []
         }
       pkgPath       = modPath packagePrefix "__init__"
       modPath ns n  = modulePath $ NonEmpty.fromList $ ns <> [n]
+      f name funcs  = SCD ClassDef
+        { cdDecorators = []
+        , cdName       = name
+        , cdArgs       = arg [eAbc, mTyping `EAttr` "Generic" `ESub` [tS]]
+        , cdSuite      = funcs
+        }
   pure allFiles
 
 makeModule :: GuguguK r m
            => Module
-           -> m (FilePath, FileInput)
+           -> m (ForeignTypeResult, (FilePath, FileInput))
 makeModule md@Module{..} = do
-  importsAndTypeDecs <- traverse makeData moduleDatas
+  GuguguPythonOption{..} <- asks toGuguguPythonOption
+  importsAndTypeDecs <- traverse (makeData md) moduleDatas
   mod' <- mkModuleCode md
-  let (imports, typeDecs) = fold importsAndTypeDecs
+  let ((imports, foreigns), typeDecs) = fold importsAndTypeDecs
+  let (iTyping, eTypeVar) = importItem $ "typing" :| ["TypeVar"]
   let moduleBody   = FileInput
-        { fiImports = importAnn : Set.toAscList imports
-        , fiContent = typeDecs
+        { fiImports = importAnn : Set.toAscList iAll
+        , fiContent = sAll
         }
       path         = modulePath mod'
-  pure (path, moduleBody)
+      (iAll, sAll) = codecPre <> mainBody
+      mainBody     = (imports, typeDecs)
+      codecPre     = if withCodec
+        then (iTyping, [sTv "S", sTv "R"]) else mempty
+      sTv name     = SA AssignmentStmt
+        { asTarget = TSimple name
+        , asValue  = eTypeVar `eCall` [ESimple $ unsafeQuote name]
+        }
+  pure (foreigns, (path, moduleBody))
 
 makeData :: GuguguK r m
-         => Data
-         -> m (Set ImportStmt, [Statement])
-makeData d@Data{..} = do
+         => Module
+         -> Data
+         -> m (ImportsAndForeign, [Statement])
+makeData md d@Data{..} = do
+  GuguguPythonOption{..} <- asks toGuguguPythonOption
   dataCode <- mkTypeCode d
   (imports, maybeDec) <- case dataConDef of
     Just (DRecord RecordCon{..}) -> do
@@ -149,8 +194,160 @@ makeData d@Data{..} = do
           (iEnum, tIntEnum) = importItem $ "enum" :| ["IntEnum"]
       pure (iEnum, Just classDef)
     Nothing                      -> pure (Set.empty, Nothing)
-  let decs = toList maybeDec
-  pure (imports, fmap SCD decs)
+  (foreigns', codecs) <- if withCodec then makeCodecDefs md d else pure mempty
+  let decs       = if null codecs then toList maybeDec else [withCodecs]
+      withCodecs = clazz{ cdSuite = cdSuite clazz <> codecs }
+      clazz      = fromMaybe defaultDec maybeDec
+      defaultDec = ClassDef
+        { cdDecorators = []
+        , cdName       = dataCode <> "Codec"
+        , cdArgs       = noArg
+        , cdSuite      = []
+        }
+  pure ((imports, mempty) <> foreigns', fmap SCD decs)
+
+makeCodecDefs :: GuguguK r m
+              => Module
+              -> Data
+              -> m (ImportsAndForeign, [Statement])
+makeCodecDefs Module{..} d@Data{..} = do
+  GuguguPythonOption{..} <- asks toGuguguPythonOption
+  (iThis, tThis) <- resolveLocalPythonType d
+  encodeName <- mkTypeFunc $ "encode" <> dataName
+  decodeName <- mkTypeFunc $ "decode" <> dataName
+  let eA                 = ESimple "a"
+      pCls               = ("cls", Nothing)
+      eS                 = ESimple "s"
+      pS                 = ("s", Just tS)
+      tR                 = ESimple "R"
+      tDecodeR           = Just $ mTyping `EAttr` "Tuple" `ESub` [tS, tThis]
+      (iCodec, mCodec)   = importModule $ NonEmpty.fromList $
+        runtimePkg <> ["codec"]
+      (iTyping, mTyping) = importModule $ "typing" :| []
+  (foreigns, iCodecs, encodeStmts, decodeStmts) <- case dataConDef of
+    Just (DRecord RecordCon{..}) -> do
+      let eS1      = ESimple "s1"
+          eLambda' = eLambda1 "s2"
+      codecComps <- for (indexed recordConFields) $ \(i, rf) -> do
+        fieldCode <- mkFieldCode rf
+        fieldValue <- mkFieldValue rf
+        (iField, (encoder, decoder)) <- makeCodecExpr $ recordFieldType rf
+        let encodeS = SA AssignmentStmt
+              { asTarget = TSimple "s1"
+              , asValue  = eImpl `EAttr` "encode_record_field" `eCall`
+                  [ eS1, eI, fieldValue
+                  , eLambda' $ \s2 ->
+                      encoder `eCall` [s2 , eA `EAttr` fieldCode, eImpl]
+                  ]
+              }
+            decodeS = SA AssignmentStmt
+              { asTarget = TTwo "s1" vi
+              , asValue  = eImpl `EAttr` "decode_record_field" `eCall`
+                  [ eS1, eI, fieldValue
+                  , eLambda' $ \s2 -> decoder `eCall` [s2, eImpl]
+                  ]
+              }
+            eI      = ESimple $ showText i
+            eVi     = ESimple vi
+            vi      = "v" <> showText i
+        pure (iField, encodeS, decodeS, eVi)
+      let (iFields, encodeStmts, decodeStmts, fields) =
+            List.unzip4 codecComps
+      let encodeDef       = [encodeFieldsDef, fDef "encode_record"]
+          decodeDef       = [decodeFieldsDef, fDef "decode_record"]
+          encodeFieldsDef = fK $ encodeStmts <> [sReturn eS1]
+          decodeFieldsDef = fK $ decodeStmts <> [sR]
+            where sR = SR ReturnStmt
+                    { rsValues = [eS1, tThis `eCall` fields]
+                    }
+          fDef attr       = sReturn $ eImpl `EAttr` attr `eCall` params
+          fK suite        = SFD FuncDef
+            { fdDecorators = []
+            , fdName       = "k"
+            , fdParams     = [("s1", Nothing)]
+            , fdRType      = Nothing
+            , fdSuite      = suite
+            }
+          params          =
+            [eS, ESimple $ showText (length recordConFields), eK]
+      pure (mempty, fold iFields, encodeDef, decodeDef)
+    Just (DEnum names)           -> do
+      vnPairs <- for names $ \name -> do
+        enumCode <- mkEnumCode name
+        enumValue <- mkEnumValue name
+        pure (tThis `EAttr` enumCode, enumValue)
+      let encodeDef  = sReturn $ eImpl `EAttr` "encode_enum" `eCall`
+            [ eS
+            , eA
+            , eLambda1 "a1" $ \a -> a `EAttr` "value"
+            , eLambda1 "a1" $ \a -> EDict (toList vnPairs) `ESub` [a]
+            ]
+          decodeDef  = sReturn $ eImpl `EAttr` "decode_enum" `eCall`
+            [ eS
+            , ESimple "by_index"
+            , eLambda1 "n" $ \n ->
+                EDict (fmap swap $ toList vnPairs) `EAttr` "get" `eCall` [n]
+            ]
+          byIndexDef = SFD FuncDef
+            { fdDecorators = []
+            , fdName       = "by_index"
+            , fdParams     = [("i", Nothing)]
+            , fdRType      = Nothing
+            , fdSuite      =
+                [ ST TryStmt
+                    { tsBody    = [sReturn $ tThis `eCall` [ESimple "i"]]
+                    , tsExcepts =
+                        [(ESimple "ValueError", Nothing, [sReturn eNone])]
+                    , tsElse    = Nothing
+                    , tsFinally = Nothing
+                    }
+                ]
+            }
+      pure (mempty, Set.empty, [encodeDef], [byIndexDef, decodeDef])
+    Nothing                      -> do
+      let qualForeignName = if moduleName == "Foreign"
+            then dataName else moduleName <> dataName
+      encodeImplName <- mkTypeFunc $ "encode" <> qualForeignName
+      decodeImplName <- mkTypeFunc $ "decode" <> qualForeignName
+      let (iAbc, eAbstract) = importItem $ "abc" :| ["abstractmethod"]
+      let encodeFDef = sReturn $ eImpl `EAttr` encodeImplName `eCall` [eS, eA]
+          decodeFDef = sReturn $ eImpl `EAttr` decodeImplName `eCall` [eS]
+          foreigns'  = (iTyping <> iAbc <> iThis, ([encodeImpl], [decodeImpl]))
+          encodeImpl = SFD FuncDef
+            { fdDecorators = [eAbstract]
+            , fdName       = encodeImplName
+            , fdParams     = [pSelf, pS, ("v", Just tThis)]
+            , fdRType      = Just tS
+            , fdSuite      = notImplemented
+            }
+          decodeImpl = SFD FuncDef
+            { fdDecorators = [eAbstract]
+            , fdName       = decodeImplName
+            , fdParams     = [pSelf, pS]
+            , fdRType      = tDecodeR
+            , fdSuite      = notImplemented
+            }
+          pSelf      = ("self", Nothing)
+      pure (foreigns', iThis, [encodeFDef], [decodeFDef])
+  let allImports  = iCodec <> iThis <> iTyping <> iCodecs
+      encoderDef  = SFD FuncDef
+        { fdDecorators = dClassmethod
+        , fdName       = encodeName
+        , fdParams     =
+            [pCls, pS, ("a", Just tThis), ("impl", Just tEncoderImpl)]
+        , fdRType      = Just tS
+        , fdSuite      = encodeStmts
+        }
+        where tEncoderImpl = mCodec `EAttr` "EncoderImpl" `ESub` [tS, tR]
+      decoderDef  = SFD FuncDef
+        { fdDecorators = dClassmethod
+        , fdName       = decodeName
+        , fdParams     = [pCls, pS, ("impl", Just tDecoderImpl)]
+        , fdRType      = tDecodeR
+        , fdSuite      = decodeStmts
+        }
+        where tDecoderImpl = mCodec `EAttr` "DecoderImpl" `ESub` [tS, tR]
+  pure ((allImports, foreigns), [encoderDef, decoderDef])
 
 
 makeType :: GuguguK r m => GType -> m (Set ImportStmt, Expr)
@@ -164,6 +361,20 @@ makeType GApp{..} = do
           allImports         = fold imports' `Set.union` imports
           (imports', params) = unzip importsAndParams
       pure (allImports, pType)
+
+makeCodecExpr :: GuguguK r m => GType -> m (Set ImportStmt, (Expr, Expr))
+makeCodecExpr GApp{..} = do
+  codecAndImports@(imports, (encoderF, decoderF)) <- resolveTypeCodec typeCon
+  if null typeParams
+    then pure codecAndImports
+    else do
+      importsAndParams <- traverse makeCodecExpr typeParams
+      let encoder                = encoderF `eCall` encoderPs
+          decoder                = decoderF `eCall` decoderPs
+          allImports             = fold imports' `Set.union` imports
+          (imports', params)     = unzip importsAndParams
+          (encoderPs, decoderPs) = unzip params
+      pure (allImports, (encoder, decoder))
 
 resolvePythonType :: GuguguK r m => Text -> m (Set ImportStmt, Expr)
 resolvePythonType t = do
@@ -188,6 +399,34 @@ resolvePythonType t = do
         PString -> simple "str"
         PMaybe  -> typing "Optional"
         PList   -> typing "List"
+
+resolveTypeCodec :: GuguguK r m => Text -> m (Set ImportStmt, (Expr, Expr))
+resolveTypeCodec t = do
+  rr <- resolveTypeCon t
+  (encoderQName, decoderQName) <- case rr of
+    ResolutionError e -> throwError e
+    LocalType d       -> do
+      n <- mkTypeCode d
+      let qName = case dataConDef d of
+            Just _  -> n :| []
+            Nothing -> (n <> "Codec") :| []
+      pure (qName, qName)
+    Imported md d     -> do
+      modName <- mkModuleCode md
+      n <- mkTypeCode d
+      let qName = modName <> case dataConDef d of
+            Just _  -> n :| []
+            Nothing -> (n <> "Codec") :| []
+      pure (qName, qName)
+    Primitive _       -> do
+      GuguguPythonOption{..} <- asks toGuguguPythonOption
+      let f n = NonEmpty.fromList $ runtimePkg <> ["codec", n]
+      pure (f "Encoders", f "Decoders")
+  let f p qName = do
+        funcName <- mkTypeFunc $ p <> t
+        let (imports, eType) = importItem qName
+        pure (imports, eType `EAttr` funcName)
+  liftA2 (liftA2 (,)) (f "encode" encoderQName) (f "decode" decoderQName)
 
 resolveLocalPythonType :: GuguguK r m => Data -> m (Set ImportStmt, Expr)
 resolveLocalPythonType d@Data{..} = case dataConDef of
@@ -224,13 +463,25 @@ mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
 
+mkTypeFunc :: GuguguK r m => Text -> m Text
+mkTypeFunc name = withTransformer transTypeFunc $ \f ->
+  f name
+
 mkFieldCode :: GuguguK r m => RecordField -> m Text
 mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
   f recordFieldName
 
+mkFieldValue :: GuguguK r m => RecordField -> m Expr
+mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
+  ESimple $ unsafeQuote $ f recordFieldName
+
 mkEnumCode :: GuguguK r m => Text -> m Text
 mkEnumCode name = withTransformer transEnumCode $ \f ->
   f name
+
+mkEnumValue :: GuguguK r m => Text -> m Expr
+mkEnumValue name = withTransformer transEnumValue $ \f ->
+  ESimple $ unsafeQuote $ f name
 
 
 -- Utilities
@@ -243,6 +494,18 @@ importAnn = ImportFrom ("__future__" :| []) ("annotations" :| [])
 
 eCall :: Expr -> [Expr] -> Expr
 eCall func args = func `ECall` arg args
+
+eLambda1 :: Text -> (Expr -> Expr) -> Expr
+eLambda1 argName = \f -> ELambda LambdaExpr
+  { leParams = [argName]
+  , leExpr   = f eArg
+  }
+  where eArg = ESimple argName
+
+sReturn :: Expr -> Statement
+sReturn expr = SR ReturnStmt
+  { rsValues = [expr]
+  }
 
 noArg :: ArgumentList
 noArg = arg []
@@ -271,6 +534,24 @@ withTransformer :: GuguguK r m
 withTransformer selector k = do
   nt <- asks $ selector . nameTransformers . toGuguguPythonOption
   pure . k $ runNameTransformer nt
+
+eNone :: Expr
+eNone = ESimple "None"
+
+eImpl :: Expr
+eImpl = ESimple "impl"
+
+eK :: Expr
+eK = ESimple "k"
+
+tS :: Expr
+tS = ESimple "S"
+
+notImplemented :: [Statement]
+notImplemented = [SRA $ RaiseStmt $ ESimple "NotImplementedError"]
+
+dClassmethod :: [Expr]
+dClassmethod = [ESimple "classmethod"]
 
 
 -- Instances

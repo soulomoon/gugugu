@@ -94,6 +94,7 @@ data GuguguNameTransformers
     , transFuncCode    :: NameTransformer    -- ^ Function name code
     , transFuncValue   :: NameTransformer    -- ^ Function name value
     , transTypeCode    :: NameTransformer    -- ^ Type name code
+    , transTypeFunc    :: NameTransformer    -- ^ Type name in function
     , transFieldCode   :: NameTransformer    -- ^ Field name code
     , transFieldValue  :: NameTransformer    -- ^ Field name value
     , transEnumCode    :: NameTransformer    -- ^ Enum name code
@@ -136,6 +137,11 @@ guguguNameTransformers defaults = do
     , help "type name transformer for code"
     , value $ transTypeCode defaults
     ]
+  transTypeFunc' <- nameTransformerOption $ fold
+    [ long "trans-type-func"
+    , help "type name transformer in function"
+    , value $ transTypeFunc defaults
+    ]
   transFieldCode' <- nameTransformerOption $ fold
     [ long "trans-field-code"
     , help "record field name transformer for code"
@@ -163,6 +169,7 @@ guguguNameTransformers defaults = do
     , transFuncCode    = transFuncCode'
     , transFuncValue   = transFuncValue'
     , transTypeCode    = transTypeCode'
+    , transTypeFunc    = transTypeFunc'
     , transFieldCode   = transFieldCode'
     , transFieldValue  = transFieldValue'
     , transEnumCode    = transEnumCode'

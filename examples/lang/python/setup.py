@@ -7,10 +7,11 @@ setup(
         *find_packages("gugugu-generated"),
         *find_namespace_packages(
             "gugugu-generated",
-            include=["guguguexamples.*"],
+            include=["guguguexamples.*", "gugugu.*"],
         ),
     ],
     package_dir={
+        "gugugu": "gugugu-generated/gugugu",
         "guguguexamples.definitions":
             "gugugu-generated/guguguexamples/definitions",
         "": "src",
