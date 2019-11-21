@@ -2,6 +2,7 @@
 build/
 run/
 tmp/
+dist/
 
 # Native objects
 *.o
@@ -11,9 +12,13 @@ tmp/
 *.hi
 .stack-work/
 
+# Gugugu generated
+gugugu-generated/
+
 # Python
 *.pyc
 __pycache__/
+*.egg-info/
 
 # Java and Gradle
 *.class
