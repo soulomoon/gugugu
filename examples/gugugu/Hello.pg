@@ -21,3 +21,19 @@ data AssociatedList
 calculateFibs :: Int32 -> IO AssociatedList
 
 incrOneDay :: DateTime -> IO DateTime
+
+
+-- Sample usage
+
+data UseAllTypes
+  = UseAllTypes
+    { iUnit      :: Unit
+    , iBool      :: Bool
+    , iInt32     :: Int32
+    , iDouble    :: Double
+    , iString    :: String
+    , iList      :: List UseAllTypes
+    , iMaybe     :: Maybe UseAllTypes
+    , iEnum      :: Operation
+    , iForeignDt :: DateTime
+    }
