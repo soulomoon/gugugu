@@ -26,6 +26,7 @@ module Gugugu.Lang.Python.SourceUtils
   -- * Compound statements
   -- | * https://docs.python.org/3/reference/compound_stmts.html
   , Suite
+  , IfStmt(..)
   , TryStmt(..)
   , FuncDef(..)
   , ClassDef(..)
@@ -95,7 +96,9 @@ data Expr
   | EAttr Expr Identifier
   | ECall Expr ArgumentList
   | ESub Expr [Expr]
+  | EBinary Expr Text Expr
   | ELambda LambdaExpr
+  | EList [Expr]
   | EDict [(Expr, Expr)]
   deriving Show
 
@@ -153,6 +156,7 @@ augop                     ::=  "+=" | "-=" | "*=" | "@=" | "\/=" | "\/\/=" | "%=
  -}
 data Target
   = TSimple Identifier
+  | TAttr Expr Identifier
   | TTwo Identifier Identifier
   deriving Show
 
@@ -229,6 +233,20 @@ suite         ::=  stmt_list NEWLINE | NEWLINE INDENT statement+ DEDENT
 @
  -}
 type Suite = [Statement]
+
+{-|
+@
+if_stmt ::=  "if" expression ":" suite
+             ("elif" expression ":" suite)*
+             ["else" ":" suite]
+@
+ -}
+data IfStmt
+  = IfStmt
+    { isCond  :: Expr
+    , isFirst :: Suite
+    }
+  deriving Show
 
 {-|
 @
@@ -355,6 +373,7 @@ data Statement
   | SAA AnnotatedAssignmentStmt
   | SR ReturnStmt
   | SRA RaiseStmt
+  | SI IfStmt
   | ST TryStmt
   | SFD FuncDef
   | SCD ClassDef
@@ -376,23 +395,36 @@ writeSuite suite = indentBy 4 $ if (null suite)
 
 instance SrcComp Expr where
   writeSrcComp v = case v of
-    ESimple t   -> writeText t
-    EAttr p n   -> do
+    ESimple t      -> writeText t
+    EAttr p n      -> do
       writeSrcComp p
       writeText "."
       writeText n
-    ECall p arg -> do
+    ECall p arg    -> do
       writeSrcComp p
       writeText "("
       writeSrcComp arg
       writeText ")"
-    ESub p ks   -> do
+    ESub p ks      -> do
       writeSrcComp p
       writeText "["
       forWithComma_ ks writeSrcComp
       writeText "]"
-    ELambda le  -> writeSrcComp le
-    EDict kvs   -> do
+    EBinary l op r -> do
+      writeSrcComp l
+      writeText " "
+      writeText op
+      writeText " "
+      writeSrcComp r
+    ELambda le     -> writeSrcComp le
+    EList vs       -> do
+      writeText "[\n"
+      indentBy 4 $ for_ vs $ \v' -> withNewLine $ do
+        writeSrcComp v'
+        writeText ","
+      doIndent
+      writeText "]"
+    EDict kvs      -> do
       writeText "{\n"
       indentBy 4 $ for_ kvs $ \(k, v') -> withNewLine $ do
         writeSrcComp k
@@ -417,8 +449,12 @@ instance SrcComp ArgumentList where
 
 instance SrcComp Target where
   writeSrcComp v = case v of
-    TSimple t  -> writeText t
-    TTwo t1 t2 -> do
+    TSimple t       -> writeText t
+    TAttr expr attr -> do
+      writeSrcComp expr
+      writeText "."
+      writeText attr
+    TTwo t1 t2      -> do
       writeText t1
       writeText ", "
       writeText t2
@@ -458,6 +494,14 @@ instance SrcComp ImportStmt where
       writeText " import "
       forWithComma_ items writeText
 
+
+instance SrcComp IfStmt where
+  writeSrcComp IfStmt{..} = do
+    withNewLine $ do
+      writeText "if "
+      writeSrcComp isCond
+      writeText ":"
+    writeSuite isFirst
 
 instance SrcComp TryStmt where
   writeSrcComp TryStmt{..} = do
@@ -529,6 +573,7 @@ instance SrcComp Statement where
     SAA c -> writeSrcComp c
     SR c  -> writeSrcComp c
     SRA c -> writeSrcComp c
+    SI c  -> writeSrcComp c
     ST c  -> writeSrcComp c
     SFD c -> writeSrcComp c
     SCD c -> writeSrcComp c

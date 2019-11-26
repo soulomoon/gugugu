@@ -45,6 +45,11 @@ guguguPythonMain = runExceptIO $ do
       createDirectoryIfMissing True pkgDir
       writeRuntimeFile "__init__" B.empty
       writeRuntimeFile "codec" codecFile
+    when (withServer opts || withClient opts) $ do
+      let transportFile = f withServer serverFile
+                        $ transportCommonFile
+          f p x z       = if p opts then z <> "\n\n" <> x else z
+      writeRuntimeFile "transport" transportFile
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
 
@@ -65,7 +70,7 @@ optParser = do
     , metavar "RUNTIME_PACKAGE"
     , help "location of gugugu runtime package"
     ]
-  withCodec <- pWithCodec
+  ~(withCodec, withServer, withClient) <- pWithCodecServerClient
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
     { transModuleCode  = ToLower
     , transModuleValue = ToSnake
@@ -90,3 +95,9 @@ optParser = do
 
 codecFile :: ByteString
 codecFile = $(embedFile "runtime/codec.py")
+
+transportCommonFile :: ByteString
+transportCommonFile = $(embedFile "runtime/transport.py")
+
+serverFile :: ByteString
+serverFile = $(embedFile "runtime/server.py")

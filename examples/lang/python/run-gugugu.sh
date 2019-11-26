@@ -19,4 +19,5 @@ gugugu-python \
 	--output=$SRC_OUTPUT \
 	--package-prefix=guguguexamples.definitions \
 	--with-codec \
+	--with-server \
 	;

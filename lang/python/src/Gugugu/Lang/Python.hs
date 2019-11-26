@@ -44,6 +44,8 @@ data GuguguPythonOption
     { packagePrefix    :: [Text]                  -- ^ Package prefix
     , runtimePkg       :: [Text]                  -- ^ Runtime module
     , withCodec        :: Bool                    -- ^ True if generate codec
+    , withServer       :: Bool                    -- ^ True if generate server
+    , withClient       :: Bool                    -- ^ True if generate client
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -133,6 +135,9 @@ makeModule :: GuguguK r m
 makeModule md@Module{..} = do
   GuguguPythonOption{..} <- asks toGuguguPythonOption
   importsAndTypeDecs <- traverse (makeData md) moduleDatas
+  transComps <- if (withServer || withClient) && not (null moduleFuncs)
+    then makeTransport md
+    else pure mempty
   mod' <- mkModuleCode md
   let ((imports, foreigns), typeDecs) = fold importsAndTypeDecs
   let (iTyping, eTypeVar) = importItem $ "typing" :| ["TypeVar"]
@@ -141,7 +146,7 @@ makeModule md@Module{..} = do
         , fiContent = sAll
         }
       path         = modulePath mod'
-      (iAll, sAll) = codecPre <> mainBody
+      (iAll, sAll) = codecPre <> mainBody <> transComps
       mainBody     = (imports, typeDecs)
       codecPre     = if withCodec
         then (iTyping, [sTv "S", sTv "R"]) else mempty
@@ -349,6 +354,123 @@ makeCodecDefs Module{..} d@Data{..} = do
         where tDecoderImpl = mCodec `EAttr` "DecoderImpl" `ESub` [tS, tR]
   pure ((allImports, foreigns), [encoderDef, decoderDef])
 
+makeTransport :: GuguguK r m => Module -> m (Set ImportStmt, [Statement])
+makeTransport md@Module{..} = do
+  GuguguPythonOption{..} <- asks toGuguguPythonOption
+  let
+      (cImports, mCodec)    = importModule $ NonEmpty.fromList $
+        runtimePkg <> ["codec"]
+      (tImports, mTrans)    = importModule $ NonEmpty.fromList $
+        runtimePkg <> ["transport"]
+      (iAbc, mAbc)          = importModule $ "abc" :| []
+      dAbstract             = [mAbc `EAttr` "abstractmethod"]
+      mkEncode encoder impl = eLambda1 "x" $ \x ->
+        mCodec `EAttr` "encode" `eCall` [x, impl, encoder]
+      mkDecode decoder impl = eLambda1 "r" $ \r ->
+        mCodec `EAttr` "decode" `eCall` [r, impl, decoder]
+      eNamespace            = ESimple "NAMESPACE"
+  transportComps <- for moduleFuncs $ \fn@Func{..} -> do
+    funcCode <- mkFuncCode fn
+    funcValue <- mkFuncValue fn
+    funcCodomain1 <- case funcCodomain of
+      GApp{ typeCon = "IO", typeParams = [v] } -> pure v
+      _                                        ->
+        throwError "Function codomain must be a type like IO a"
+    (iFd, (_, fdDecoder)) <- makeCodecExpr funcDomain
+    (iFcd, (fcdEncoder, _)) <- makeCodecExpr funcCodomain1
+    let funcDec    = SFD FuncDef
+          { fdDecorators = dAbstract
+          , fdName       = funcCode
+          , fdParams     = params
+          , fdRType      = Nothing
+          , fdSuite      = notImplemented
+          }
+        serverFunc = eLambda1 "k" $ \k -> eLambda1 "fr" $ \fr -> k `eCall`
+            [ mkDecode fdDecoder $ ESimple "decoder_impl"
+            , mkEncode fcdEncoder $ ESimple "encoder_impl"
+            , eImpl `EAttr` funcCode
+            , fr
+            ]
+        params     = [("self", Nothing), ("fa", Nothing)]
+    pure (iFd <> iFcd, funcDec, (funcValue, serverFunc))
+  let (imports, funcDecs, serverCases) = unzip3 transportComps
+  className <- mkModuleType md "Module"
+  moduelValue <- mkModuleValue md
+  let allDecs          = [classDef]
+                      <> [serverClass | withServer]
+                      <> [nsDef]
+      allImports       = tImports <> cImports <> iAbc <> fold imports
+      classDef         = SCD ClassDef
+        { cdDecorators = []
+        , cdName       = className
+        , cdArgs       = arg [mAbc `EAttr` "ABC"]
+        , cdSuite      = funcDecs
+                      <> [toTransportDef | withServer]
+        }
+      toTransportDef   = SFD FuncDef
+        { fdDecorators = dClassmethod
+        , fdName       = "to_transport"
+        , fdParams     =
+            [ ("cls", Nothing)
+            , ("impl", Just $ ESimple className)
+            , ("decoder_impl", Nothing)
+            , ("encoder_impl", Nothing)
+            ]
+        , fdRType      = Just $ mTrans `EAttr` "ServerTransport"
+        , fdSuite      =
+            [sReturn $ ESimple serverName `eCall` [EDict serverCases]]
+        }
+      serverClass      = SCD ClassDef
+        { cdDecorators = []
+        , cdName       = serverName
+        , cdArgs       = arg [mTrans `EAttr` "ServerTransport"]
+        , cdSuite      =
+            [ SFD FuncDef
+                { fdDecorators = []
+                , fdName       = "__init__"
+                , fdParams     = [("self", Nothing), ("handler_map", Nothing)]
+                , fdRType      = Nothing
+                , fdSuite      = [assignSelf "_handler_map" "handler_map"]
+                }
+            , SFD FuncDef
+                { fdDecorators = []
+                , fdName       = "ask"
+                , fdParams     =
+                    [("self", Nothing), ("name", Nothing), ("k", Nothing)]
+                , fdRType      = Nothing
+                , fdSuite      =
+                    [ SI IfStmt
+                        { isCond  = EBinary
+                            (eName `EAttr` "namespace") "!=" eNamespace
+                        , isFirst = [sReturn eNone]
+                        }
+                    , SA AssignmentStmt
+                        { asTarget = TSimple "handler"
+                        , asValue  =
+                            eSelf `EAttr` "_handler_map" `EAttr` "get"
+                            `eCall` [eName `EAttr` "name"]
+                        }
+                    , SI IfStmt
+                        { isCond  = EBinary (ESimple "handler") "is not" eNone
+                        , isFirst = [sReturn $ ESimple "handler" `eCall` [eK]]
+                        }
+                    , sReturn eNone
+                    ]
+                }
+            ]
+        }
+        where eName = ESimple "name"
+      nsDef            = SA AssignmentStmt
+        { asTarget = TSimple "NAMESPACE"
+        , asValue  = moduelValue
+        }
+      serverName       = "_ServerTransport"
+      assignSelf n v   = SA AssignmentStmt
+        { asTarget = eSelf `TAttr` n
+        , asValue  = ESimple v
+        }
+  pure (allImports, allDecs)
+
 
 makeType :: GuguguK r m => GType -> m (Set ImportStmt, Expr)
 makeType GApp{..} = do
@@ -459,6 +581,22 @@ mkModuleCode Module{..} = do
   withTransformer transModuleCode $ \f ->
     NonEmpty.fromList $ packagePrefix <> [f moduleName]
 
+mkModuleValue :: GuguguK r m => Module -> m Expr
+mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->
+  EList [ESimple $ unsafeQuote $ f moduleName]
+
+mkModuleType :: GuguguK r m => Module -> Text -> m Text
+mkModuleType Module{..} suffix = withTransformer transModuleType $ \f ->
+  f $ moduleName <> suffix
+
+mkFuncCode :: GuguguK r m => Func -> m Text
+mkFuncCode Func{..} = withTransformer transFuncCode $ \f ->
+  f funcName
+
+mkFuncValue :: GuguguK r m => Func -> m Expr
+mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
+  ESimple $ unsafeQuote $ f funcName
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -537,6 +675,9 @@ withTransformer selector k = do
 
 eNone :: Expr
 eNone = ESimple "None"
+
+eSelf :: Expr
+eSelf = ESimple "self"
 
 eImpl :: Expr
 eImpl = ESimple "impl"
