@@ -1,5 +1,11 @@
 from setuptools import setup, find_packages, find_namespace_packages
 
+
+def readfile(path: str) -> str:
+    with open(path) as h:
+        return h.read()
+
+
 setup(
     name="gugugu-python-example",
     packages=[
@@ -17,4 +23,5 @@ setup(
         "": "src",
     },
     include_package_data=True,
+    install_requires=readfile("requirements.txt"),
 )
