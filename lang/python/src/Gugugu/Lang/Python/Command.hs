@@ -46,7 +46,7 @@ guguguPythonMain = runExceptIO $ do
       writeRuntimeFile "__init__" B.empty
       writeRuntimeFile "codec" codecFile
     when (withServer opts || withClient opts) $ do
-      let transportFile = f withServer serverFile
+      let transportFile = f withClient clientFile . f withServer serverFile
                         $ transportCommonFile
           f p x z       = if p opts then z <> "\n\n" <> x else z
       writeRuntimeFile "transport" transportFile
@@ -101,3 +101,6 @@ transportCommonFile = $(embedFile "runtime/transport.py")
 
 serverFile :: ByteString
 serverFile = $(embedFile "runtime/server.py")
+
+clientFile :: ByteString
+clientFile = $(embedFile "runtime/client.py")

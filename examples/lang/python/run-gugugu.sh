@@ -20,4 +20,5 @@ gugugu-python \
 	--package-prefix=guguguexamples.definitions \
 	--with-codec \
 	--with-server \
+	--with-client \
 	;

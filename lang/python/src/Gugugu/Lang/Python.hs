@@ -376,8 +376,8 @@ makeTransport md@Module{..} = do
       GApp{ typeCon = "IO", typeParams = [v] } -> pure v
       _                                        ->
         throwError "Function codomain must be a type like IO a"
-    (iFd, (_, fdDecoder)) <- makeCodecExpr funcDomain
-    (iFcd, (fcdEncoder, _)) <- makeCodecExpr funcCodomain1
+    (iFd, (fdEncoder, fdDecoder)) <- makeCodecExpr funcDomain
+    (iFcd, (fcdEncoder, fcdDecoder)) <- makeCodecExpr funcCodomain1
     let funcDec    = SFD FuncDef
           { fdDecorators = dAbstract
           , fdName       = funcCode
@@ -391,13 +391,29 @@ makeTransport md@Module{..} = do
             , eImpl `EAttr` funcCode
             , fr
             ]
+        clientFunc = SFD FuncDef
+          { fdDecorators = []
+          , fdName       = funcCode
+          , fdParams     = params
+          , fdRType      = Nothing
+          , fdSuite      =
+              [ sReturn $ eSelf `EAttr` "_t" `EAttr` "send" `eCall`
+                  [ mTrans `EAttr` "QualName" `eCall` [eNamespace, funcValue]
+                  , mkEncode fdEncoder $ eSelf `EAttr` "_e"
+                  , mkDecode fcdDecoder $ eSelf `EAttr` "_d"
+                  , ESimple "fa"
+                  ]
+              ]
+          }
         params     = [("self", Nothing), ("fa", Nothing)]
-    pure (iFd <> iFcd, funcDec, (funcValue, serverFunc))
-  let (imports, funcDecs, serverCases) = unzip3 transportComps
+    pure (iFd <> iFcd, funcDec, (funcValue, serverFunc), clientFunc)
+  let (imports, funcDecs, serverCases, clientFuncs) =
+        List.unzip4 transportComps
   className <- mkModuleType md "Module"
   moduelValue <- mkModuleValue md
   let allDecs          = [classDef]
                       <> [serverClass | withServer]
+                      <> [clientClass | withClient]
                       <> [nsDef]
       allImports       = tImports <> cImports <> iAbc <> fold imports
       classDef         = SCD ClassDef
@@ -406,6 +422,7 @@ makeTransport md@Module{..} = do
         , cdArgs       = arg [mAbc `EAttr` "ABC"]
         , cdSuite      = funcDecs
                       <> [toTransportDef | withServer]
+                      <> [fromTransportDef | withClient]
         }
       toTransportDef   = SFD FuncDef
         { fdDecorators = dClassmethod
@@ -419,6 +436,24 @@ makeTransport md@Module{..} = do
         , fdRType      = Just $ mTrans `EAttr` "ServerTransport"
         , fdSuite      =
             [sReturn $ ESimple serverName `eCall` [EDict serverCases]]
+        }
+      fromTransportDef = SFD FuncDef
+        { fdDecorators = dClassmethod
+        , fdName       = "from_transport"
+        , fdParams     =
+            [ ("cls", Nothing)
+            , ("transport", Nothing)
+            , ("encoder_impl", Nothing)
+            , ("decoder_impl", Nothing)
+            ]
+        , fdRType      = Just $ ESimple className
+        , fdSuite      =
+            [ sReturn $ ESimple clientName `eCall`
+                [ ESimple "transport"
+                , ESimple "encoder_impl"
+                , ESimple "decoder_impl"
+                ]
+            ]
         }
       serverClass      = SCD ClassDef
         { cdDecorators = []
@@ -460,10 +495,34 @@ makeTransport md@Module{..} = do
             ]
         }
         where eName = ESimple "name"
+      clientClass      = SCD ClassDef
+        { cdDecorators = []
+        , cdName       = clientName
+        , cdArgs       = arg [ESimple className]
+        , cdSuite      =
+            [ SFD FuncDef
+                { fdDecorators = []
+                , fdName       = "__init__"
+                , fdParams     =
+                    [ ("self", Nothing)
+                    , ("transport", Nothing)
+                    , ("encoder_impl", Nothing)
+                    , ("decoder_impl", Nothing)
+                    ]
+                , fdRType      = Nothing
+                , fdSuite      =
+                    [ assignSelf "_t" "transport"
+                    , assignSelf "_e" "encoder_impl"
+                    , assignSelf "_d" "decoder_impl"
+                    ]
+                }
+            ] <> clientFuncs
+        }
       nsDef            = SA AssignmentStmt
         { asTarget = TSimple "NAMESPACE"
         , asValue  = moduelValue
         }
+      clientName       = "_" <> className
       serverName       = "_ServerTransport"
       assignSelf n v   = SA AssignmentStmt
         { asTarget = eSelf `TAttr` n
