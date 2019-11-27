@@ -3,6 +3,9 @@ jsonhttp:
     server:
       command: python -m guguguexamples.jsonhttp.server
       cwd: examples/lang/python
+    client:
+      command: python -m guguguexamples.jsonhttp.client
+      cwd: examples/lang/python
   scala:
     server:
       command: gradle runJsonHttpServer
