@@ -3,6 +3,10 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-
+This lexer is almost a copy from lexer of GHC.
+Vide: https://github.com/ghc/ghc/blob/master/compiler/parser/Lexer.x
+ -}
 module Gugugu.Parser.Lexer
   ( lexToken
   ) where
@@ -52,6 +56,10 @@ $white_no_nl+                           ;
 <layout> {
   \n                                    ;
   ()                                    { newLayoutContext }
+}
+
+<insertTvRBrace> {
+  ()                                    { doInsertTvRBrace }
 }
 
 <0> {
@@ -150,8 +158,18 @@ newLayoutContext _ _ = do
   _ <- popLexState
   s@PState{..} <- get
   offset <- getColumn
-  put s{ psLayoutContext = Layout offset : psLayoutContext }
+  case psLayoutContext of
+    Layout prevOff : _ | offset <= prevOff ->
+      pushLexState insertTvRBrace
+    _                                      ->
+      put s{ psLayoutContext = Layout offset : psLayoutContext }
   pure TvLBrace
+
+doInsertTvRBrace :: AlexAction
+doInsertTvRBrace _ _ = do
+  _ <- popLexState
+  pushLexState bol
+  pure TvRBrace
 
 newLexState :: Int -> AlexAction
 newLexState n _ _ = do
