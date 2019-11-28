@@ -264,7 +264,7 @@ export class JsonCodecImpl implements EncoderImpl<JsonCursor, JsonRepr>
     return [s1, a];
   }
 
-  private readonly format = "YYYY-MM-DDTHH:mm:ss"
+  private readonly format = "YYYY-MM-DDTHH:mm:ss";
 
   public encodeDateTime(s: JsonCursor, a: Moment): JsonCursor {
     return this.encodeString(s, a.format(this.format));
