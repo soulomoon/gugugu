@@ -1,0 +1,13 @@
+name:                gugugu-haskell-example
+
+dependencies:
+  - base >= 4.7 && < 5
+  - text
+  - vector
+
+  - time
+
+library:
+  source-dirs:
+    - src
+    - build/generated/gugugu
