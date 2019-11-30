@@ -5,14 +5,23 @@ Command line entrypoint
 {-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Gugugu.Lang.Haskell.Command
   ( guguguHaskellMain
   ) where
 
+import           Control.Monad.IO.Class
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString        as B
+import           Data.FileEmbed
 import           Data.Foldable
-import qualified Data.Map.Strict     as Map
+import qualified Data.Map.Strict        as Map
+import qualified Data.Text              as T
+import qualified Data.Text.IO           as T
 import           Options.Applicative
+import           System.Directory
 import           System.FilePath
+import           System.IO
 
 import           Gugugu.Resolver
 import           Gugugu.Utilities
@@ -26,7 +35,22 @@ guguguHaskellMain = runExceptIO $ do
   let version = "Gugugu Haskell " <> CURRENT_PACKAGE_VERSION
   GuguguCmdOption{..} <- execParser' optParser version
   modules <- loadAllModules inputDir
-  fs <- makeFiles opts modules
+  allFiles <- makeFiles opts modules
+  let (maybeCodecFile, fs) = Map.updateLookupWithKey (\_ _ -> Nothing)
+                             codecPath allFiles
+      codecPath            = runtimeFile "Codec"
+      runtimeFile name     = foldr (\x z -> T.unpack x </> z)
+                             (name <.> "hs") (runtimeMod opts)
+  liftIO $ do
+    let writePartial path embeded maybePart = for_ maybePart $ \part -> do
+          let fullPath = outputDir </> path
+          createDirectoryIfMissing True $ takeDirectory fullPath
+          putStrLn $ "Writing file: " <> fullPath
+          withFile fullPath WriteMode $ \h -> do
+            writeWith (T.hPutStr h) part
+            T.hPutStr h "\n\n"
+            B.hPut h embeded
+    writePartial codecPath codecFile maybeCodecFile
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
 
@@ -39,6 +63,14 @@ optParser = do
     , metavar "PACKAGE_PREFIX"
     , help "the package prefix, e.g. Some.Package.Prefix"
     ]
+  runtimeMod' <- strOption $ fold
+    [ long "runtime-module"
+    , short 'r'
+    , value "Gugugu.Lang.Haskell.Runtime"
+    , showDefault
+    , metavar "RUNTIME_PACKAGE"
+    , help "location of gugugu runtime package"
+    ]
   derivings' <- strOption $ fold
     [ long "derivings"
     , value ""
@@ -46,6 +78,7 @@ optParser = do
     , help $ "deriving clause for data type, use comma to separate multiples, "
           <> "e.g. Eq,Show"
     ]
+  withCodec <- pWithCodec
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
     { transModuleCode  = NoTransform
     , transModuleValue = ToSnake
@@ -61,6 +94,13 @@ optParser = do
     }
   pure GuguguHaskellOption
     { packagePrefix = splitOn' "." packagePrefix'
+    , runtimeMod    = splitOn' "." runtimeMod'
     , derivings     = splitOn' "," derivings'
     , ..
     }
+
+
+-- Embeded runtime files
+
+codecFile :: ByteString
+codecFile = $(embedFile "runtime/Codec.hs")

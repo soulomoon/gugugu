@@ -19,4 +19,5 @@ gugugu-haskell \
 	--output=$SRC_OUTPUT \
 	--package-prefix=GuguguExamples.Definitions \
 	--derivings=Show \
+	--with-codec \
 	;

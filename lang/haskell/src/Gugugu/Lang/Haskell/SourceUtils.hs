@@ -17,7 +17,14 @@ module Gugugu.Lang.Haskell.SourceUtils
   , TopDecl(..)
   , TypeDecl(..)
   , DataDecl(..)
+  , ClassDecl(..)
+  , InstDecl(..)
+  , Decl(..)
+  , TypeSig(..)
+  , Def(..)
   , Type(..)
+  , Exp(..)
+  , Pat(..)
   , Constr(..)
   ) where
 
@@ -25,6 +32,7 @@ import           Control.Monad
 import           Data.Foldable
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Text          (Text)
+import qualified Data.Text          as T
 
 import           Gugugu.Utilities
 
@@ -53,7 +61,8 @@ topdecls  → topdecl1 ; … ; topdecln                         (n ≥ 0)
  -}
 data HaskellModule
   = HaskellModule
-    { hmId      :: QualId
+    { hmExts    :: [Text]
+    , hmId      :: QualId
     , hmImports :: [ImportDecl]
     , hmDecls   :: [TopDecl]
     }
@@ -92,6 +101,8 @@ topdecl   → type simpletype = type
 data TopDecl
   = TdType TypeDecl
   | TdData DataDecl
+  | TdClass ClassDecl
+  | TdInst InstDecl
   deriving Show
 
 
@@ -123,6 +134,79 @@ data DataDecl
     }
   deriving Show
 
+{-|
+@
+            class [scontext =>] tycls tyvar [where cdecls]
+tycls     → conid                                           (type classes)
+cdecls    → { cdecl1 ; … ; cdecln }                         (n ≥ 0)
+cdecl     → gendecl
+          | (funlhs | var) rhs
+@
+ -}
+data ClassDecl
+  = ClassDecl
+    { cdName  :: Id
+    , cdTVars :: [Id]
+    , cdDecls :: [Decl]
+    }
+  deriving Show
+
+{-|
+@
+            instance [scontext =>] qtycls inst [where idecls]
+inst      → gtycon
+          | ( gtycon tyvar1 … tyvark )            (k ≥ 0, tyvars distinct)
+          | ( tyvar1 , … , tyvark )               (k ≥ 2, tyvars distinct)
+          | [ tyvar ]
+          | ( tyvar1 -> tyvar2 )                  tyvar1 and tyvar2 distinct
+idecls    → { idecl1 ; … ; idecln }                         (n ≥ 0)
+idecl     → (funlhs | var) rhs
+          |                                                 (empty)
+@
+ -}
+data InstDecl
+  = InstDecl
+    { idClass :: QualId
+    , idTypes :: [Type]
+    , idDecls :: [Decl]
+    }
+  deriving Show
+
+{-|
+@
+decl      → gendecl
+          | (funlhs | pat) rhs
+@
+ -}
+data Decl
+  = DTS TypeSig
+  | DDef Def
+  deriving Show
+
+{-|
+@
+            vars :: [context =>] type                       (type signature)
+@
+-}
+data TypeSig
+  = TypeSig
+    { tsVar  :: Id
+    , tsType :: Type
+    }
+  deriving Show
+
+{-|
+@
+            (funlhs | pat) rhs
+@
+-}
+data Def
+  = Def
+    { dLhs    :: Id
+    , dParams :: [Id]
+    , dRhs    :: Exp
+    }
+  deriving Show
 
 {-|
 @
@@ -145,6 +229,77 @@ data Type
   | TQCon (QualId)
   | TApp Type Type
   | TParen Type
+  | TArrow Type Type
+  deriving Show
+
+infixr 9 `TArrow`
+
+
+{-|
+@
+exp       → infixexp :: [context =>] type         (expression type signature)
+          | infixexp
+infixexp  → lexp qop infixexp                     (infix operator application)
+          | - infixexp                                      (prefix negation)
+          | lexp
+lexp      → \ apat1 … apatn -> exp                (lambda abstraction, n ≥ 1)
+          | let decls in exp                                (let expression)
+          | if exp [;] then exp [;] else exp                (conditional)
+          | case exp of { alts }                            (case expression)
+          | do { stmts }                                    (do expression)
+          | fexp
+fexp      → [fexp] aexp                           (function application)
+aexp      → qvar                                            (variable)
+          | gcon                                  (general constructor)
+          | literal
+          | ( exp )                               (parenthesized expression)
+          | ( exp1 , … , expk )                             (tuple, k ≥ 2)
+          | [ exp1 , … , expk ]                             (list, k ≥ 1)
+          | [ exp1 [, exp2] .. [exp3] ]           (arithmetic sequence)
+          | [ exp | qual1 , … , qualn ]           (list comprehension, n ≥ 1)
+          | ( infixexp qop )                                (left section)
+          | ( qop⟨-⟩ infixexp )                             (right section)
+          | qcon { fbind1 , … , fbindn }          (labeled construction, n ≥ 0)
+          | aexp⟨qcon⟩ { fbind1 , … , fbindn }    (labeled update, n  ≥  1)
+qual      →  pat <- exp                                     (generator)
+          | let decls                                       (local declaration)
+          | exp                                             (guard)
+alts      → alt1 ; … ; altn                                 (n ≥ 1)
+alt       → pat -> exp [where decls]
+          | pat gdpat [where decls]
+          |                                                 (empty alternative)
+@
+ -}
+data Exp
+  = ESimple Text
+  | EQual QualId
+  | EApp Exp Exp
+  | ELet [Decl] Exp
+  | ECase Exp [(Pat, Exp)]
+  | EBinary Exp Text Exp
+  deriving Show
+
+{-|
+@
+pat       → lpat qconop pat                                 (infix constructor)
+          | lpat
+lpat      → apat
+          | - (integer | float)                             (negative literal)
+          | gcon apat1 … apatk                    (arity gcon  =  k, k ≥ 1)
+apat      → var [ @ apat]                                   (as pattern)
+          | gcon                                            (arity gcon  =  0)
+          | qcon { fpat1 , … , fpatk }            (labeled pattern, k ≥ 0)
+          | literal
+          | _                                               (wildcard)
+          | ( pat )                               (parenthesized pattern)
+          | ( pat1 , … , patk )                   (tuple pattern, k ≥ 2)
+          | [ pat1 , … , patk ]                   (list pattern, k ≥ 1)
+          | ~ apat                                (irrefutable pattern)
+@
+ -}
+data Pat
+  = PSimple Text
+  | PCon QualId [Id]
   deriving Show
 
 {-|
@@ -171,6 +326,11 @@ writeQualId = flip (forWith_ ".") writeText
 
 instance SrcComp HaskellModule where
   writeSrcComp HaskellModule{..} = do
+    let maxLen = maximum $ fmap T.length hmExts
+    for_ hmExts $ \ext -> withNewLine $ do
+      writeText "{-# LANGUAGE "
+      writeText $ T.justifyLeft maxLen ' ' ext
+      writeText " #-}"
     withNewLine $ do
       writeText "module "
       writeQualId hmId
@@ -191,8 +351,10 @@ instance SrcComp ImportDecl where
 
 instance SrcComp TopDecl where
   writeSrcComp v = case v of
-    TdType d -> writeSrcComp d
-    TdData d -> writeSrcComp d
+    TdType d  -> writeSrcComp d
+    TdData d  -> writeSrcComp d
+    TdClass d -> writeSrcComp d
+    TdInst d  -> writeSrcComp d
 
 
 instance SrcComp TypeDecl where
@@ -233,20 +395,106 @@ instance SrcComp DataDecl where
             writeDerivings
             writeText "\n"
 
+instance SrcComp ClassDecl where
+  writeSrcComp ClassDecl{..} = do
+    withNewLine $ do
+      writeText "class "
+      writeText cdName
+      for_ cdTVars $ \t -> do
+        writeText " "
+        writeText t
+      writeText " where"
+    indentBy 2 $ for_ cdDecls (withNewLine . writeSrcComp)
+
+instance SrcComp InstDecl where
+  writeSrcComp InstDecl{..} = do
+    withNewLine $ do
+      writeText "instance "
+      writeQualId idClass
+      for_ idTypes $ \t -> do
+        writeText " "
+        writeSrcComp t
+      writeText " where"
+    indentBy 2 $ for_ idDecls (withNewLine . writeSrcComp)
+
+instance SrcComp Decl where
+  writeSrcComp v = case v of
+    DTS  d -> writeSrcComp d
+    DDef d -> writeSrcComp d
+
+instance SrcComp TypeSig where
+  writeSrcComp TypeSig{..} = do
+    writeText tsVar
+    writeText " :: "
+    writeSrcComp tsType
+
+instance SrcComp Def where
+  writeSrcComp Def{..} = do
+    writeText dLhs
+    for_ dParams $ \p -> do
+      writeText " "
+      writeText p
+    writeText " = "
+    writeSrcComp dRhs
 
 instance SrcComp Type where
   writeSrcComp v = case v of
-    TSimple n -> writeText n
-    TQCon qn  -> writeQualId qn
-    TApp c p  -> do
+    TSimple n    -> writeText n
+    TQCon qn     -> writeQualId qn
+    TApp c p     -> do
       writeSrcComp c
       writeText " "
       writeSrcComp p
-    TParen t  -> do
+    TParen t     -> do
       writeText "("
       writeSrcComp t
       writeText ")"
+    TArrow t1 t2 -> do
+      writeSrcComp t1
+      writeText " -> "
+      writeSrcComp t2
 
+instance SrcComp Exp where
+  writeSrcComp v = case v of
+    ESimple t      -> writeText t
+    EQual qn       -> writeQualId qn
+    EApp e1 e2     -> do
+      writeSrcComp e1
+      writeText " "
+      writeSrcComp e2
+    ELet ds e      -> do
+      writeText "let\n"
+      indentBy 2 $ do
+        indentBy 2 $ do
+          for_ ds (withNewLine . writeSrcComp)
+        doIndent
+        writeText "in "
+        writeSrcComp e
+    ECase e alts   -> do
+      writeText "case "
+      writeSrcComp e
+      writeText " of"
+      indentBy 2 $ for_ alts $ \(p, e') -> do
+        writeText "\n"
+        doIndent
+        writeSrcComp p
+        writeText " -> "
+        writeSrcComp e'
+    EBinary l op r -> do
+      writeSrcComp l
+      writeText " "
+      writeText op
+      writeText " "
+      writeSrcComp r
+
+instance SrcComp Pat where
+  writeSrcComp v = case v of
+    PSimple t -> writeText t
+    PCon c vs -> do
+      writeQualId c
+      for_ vs $ \v' -> do
+        writeText " "
+        writeText v'
 
 instance SrcComp Constr where
   writeSrcComp v = case v of
