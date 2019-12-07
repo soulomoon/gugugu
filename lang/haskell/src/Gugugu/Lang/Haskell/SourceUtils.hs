@@ -103,6 +103,8 @@ data TopDecl
   | TdData DataDecl
   | TdClass ClassDecl
   | TdInst InstDecl
+  | TdSig TypeSig
+  | TdDef Def
   deriving Show
 
 
@@ -230,6 +232,7 @@ data Type
   | TApp Type Type
   | TParen Type
   | TArrow Type Type
+  | TConstrained [Type] Type
   deriving Show
 
 infixr 9 `TArrow`
@@ -274,9 +277,11 @@ data Exp
   = ESimple Text
   | EQual QualId
   | EApp Exp Exp
+  | EParen Exp
   | ELet [Decl] Exp
   | ECase Exp [(Pat, Exp)]
   | EBinary Exp Text Exp
+  | EList [Exp]
   deriving Show
 
 {-|
@@ -321,6 +326,18 @@ data Constr
 writeQualId :: Monad m => QualId -> SrcCompT m ()
 writeQualId = flip (forWith_ ".") writeText
 
+writeConstraint :: Monad m => [Type] -> SrcCompT m ()
+writeConstraint ks = case ks of
+  []  -> pure ()
+  [k] -> do
+    writeSrcComp k
+    writeText " => "
+  _   -> do
+    writeText "("
+    forWithComma_ ks writeSrcComp
+    writeText ")"
+    writeText " => "
+
 
 -- Instances
 
@@ -355,6 +372,8 @@ instance SrcComp TopDecl where
     TdData d  -> writeSrcComp d
     TdClass d -> writeSrcComp d
     TdInst d  -> writeSrcComp d
+    TdSig d   -> writeSrcComp d   -- Assume always followed by TdDef
+    TdDef d   -> writeSrcComp d *> writeText "\n"
 
 
 instance SrcComp TypeDecl where
@@ -439,20 +458,23 @@ instance SrcComp Def where
 
 instance SrcComp Type where
   writeSrcComp v = case v of
-    TSimple n    -> writeText n
-    TQCon qn     -> writeQualId qn
-    TApp c p     -> do
+    TSimple n         -> writeText n
+    TQCon qn          -> writeQualId qn
+    TApp c p          -> do
       writeSrcComp c
       writeText " "
       writeSrcComp p
-    TParen t     -> do
+    TParen t          -> do
       writeText "("
       writeSrcComp t
       writeText ")"
-    TArrow t1 t2 -> do
+    TArrow t1 t2      -> do
       writeSrcComp t1
       writeText " -> "
       writeSrcComp t2
+    TConstrained ks t -> do
+      writeConstraint ks
+      writeSrcComp t
 
 instance SrcComp Exp where
   writeSrcComp v = case v of
@@ -462,6 +484,10 @@ instance SrcComp Exp where
       writeSrcComp e1
       writeText " "
       writeSrcComp e2
+    EParen e       -> do
+      writeText "("
+      writeSrcComp e
+      writeText ")"
     ELet ds e      -> do
       writeText "let\n"
       indentBy 2 $ do
@@ -486,6 +512,10 @@ instance SrcComp Exp where
       writeText op
       writeText " "
       writeSrcComp r
+    EList es       -> do
+      writeText "["
+      forWithComma_ es writeSrcComp
+      writeText "]"
 
 instance SrcComp Pat where
   writeSrcComp v = case v of

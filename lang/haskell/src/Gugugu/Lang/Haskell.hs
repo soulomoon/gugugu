@@ -17,6 +17,7 @@ import           Control.Monad.Reader
 import           Data.Bifunctor
 import           Data.Char
 import           Data.Foldable
+import qualified Data.List                       as List
 import           Data.List.NonEmpty              (NonEmpty (..))
 import qualified Data.List.NonEmpty              as NonEmpty
 import           Data.Map.Strict                 (Map)
@@ -42,6 +43,8 @@ data GuguguHaskellOption
     , runtimeMod       :: [Text]                  -- ^ Runtime module
     , derivings        :: [Text]                  -- ^ derivings clause
     , withCodec        :: Bool                    -- ^ True if generate codec
+    , withServer       :: Bool                    -- ^ True if generate server
+    , withClient       :: Bool                    -- ^ True if generate client
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -96,6 +99,7 @@ makeModules opts@GuguguHaskellOption{..} modules = do
   let allFiles    = Map.fromList $
            files
         <> [(codecPath, codecModule) | withCodec]
+        <> [(transPath, transModule) | withServer || withClient]
       codecModule = HaskellModule
         { hmExts    = ["FunctionalDependencies", "MultiParamTypeClasses"]
         , hmId      = codecModId
@@ -113,8 +117,17 @@ makeModules opts@GuguguHaskellOption{..} modules = do
             , cdTVars = ["c", "f"]
             , cdDecls = ds
             }
+      transModule = HaskellModule
+        { hmExts    = ["ExistentialQuantification", "RankNTypes"]
+        , hmId      = transModId
+        , hmImports = Set.toAscList $
+            unsafeImportMods' ["Data.Text", "Data.Vector"]
+        , hmDecls   = []
+        }
       codecPath   = modulePath codecModId
+      transPath   = modulePath transModId
       codecModId  = NonEmpty.fromList $ runtimeMod <> ["Codec"]
+      transModId  = NonEmpty.fromList $ runtimeMod <> ["Transport"]
   pure allFiles
 
 makeModule :: GuguguK r m
@@ -125,16 +138,25 @@ makeModule md@Module{..} = do
   importsAndDecs <- traverse makeData moduleDatas
   importsAndInstDecs <- if withCodec
     then traverse (makeCodecInsts md) moduleDatas else pure mempty
+  (imports'', transports) <-
+    if (withServer || withClient) && not (null moduleFuncs)
+    then makeTransports md else pure mempty
   mod' <- mkModuleCode md
   let (imports, decs) = fold importsAndDecs
   let (foreignItems, (imports', instDecs)) = fold importsAndInstDecs
   let moduleBody = HaskellModule
-        { hmExts    = ["OverloadedStrings" | withCodec]
+        { hmExts    = List.sort $
+               ["OverloadedStrings" | withCodec]
+            <> ( if hasTrans
+                  then ["OverloadedLists", "MultiParamTypeClasses"]
+                  else []
+               )
         , hmId      = mod'
-        , hmImports = Set.toAscList $ imports <> imports'
-        , hmDecls   = decs <> instDecs
+        , hmImports = Set.toAscList $ imports <> imports' <> imports''
+        , hmDecls   = decs <> transports <> instDecs
         }
       path       = modulePath mod'
+      hasTrans   = not $ null transports
   pure (foreignItems, (path, moduleBody))
 
 makeData :: GuguguK r m
@@ -324,6 +346,92 @@ makeCodecInsts md d@Data{..} = do
           tF t         = TSimple "f" `TApp` t
       pure (((imports, allDecs), ([fEncodeDec], [fDecodeDec])), mempty)
 
+makeTransports :: GuguguK r m
+               => Module
+               -> m ModuleItems
+makeTransports md@Module{..} = do
+  GuguguHaskellOption{..} <- asks toGuguguHaskellOption
+  let codecV n   = codecId <> (n :| [])
+      codecId    = NonEmpty.fromList $ runtimeMod <> ["Codec"]
+      transV n   = transId <> (n :| [])
+      transId    = NonEmpty.fromList $ runtimeMod <> ["Transport"]
+      eCodec n c = EParen $ EQual (codecV n) `EApp` ESimple c
+      nNamespace = "_namespace"
+      eNamespace = ESimple nNamespace
+  transportComps <- for moduleFuncs $ \fn@Func{..} -> do
+    (fdImports, fd) <- makeType funcDomain
+    (fcdImports, fcd) <- case funcCodomain of
+      GApp{ typeCon = "IO", typeParams = [v] } -> makeType v
+      _                                        ->
+        throwError "Function codomain must be a type like IO a"
+    funcCode <- mkFuncCode fn
+    funcValue <- mkFuncValue fn
+    let funcSig   = DTS TypeSig
+          { tsVar  = funcCode
+          , tsType = TSimple "a" `TArrow`
+                     (TSimple "f" `TApp` fd) `TArrow`
+                     (TSimple "m" `TApp` TParen (TSimple "g" `TApp` fcd))
+          }
+        serverAlt = (PSimple funcValue, ESimple "Just" `EApp` serverExp)
+        serverExp = EParen $ ESimple "k"
+          `EApp` eCodec "decodeValue" "ca"
+          `EApp` eCodec "encodeValue" "cb"
+          `EApp` EParen (ESimple funcCode `EApp` ESimple "a")
+    pure (fdImports <> fcdImports, funcSig, serverAlt)
+  className <- mkModuleType md "Module"
+  transportName <- mkModuleType md "Transport"
+  moduleValue <- mkModuleValue md
+  let (funcImports, classFuncs, serverAlts) = unzip3 transportComps
+  let allDecls   = [classDec]
+                <> (if withServer then allServers else [])
+                <> [nsSig, nsDef]
+      classDec   = TdClass ClassDecl
+        { cdName  = className
+        , cdTVars = tParams
+        , cdDecls = classFuncs
+        }
+      allServers = [serverSig, serverDef]
+      serverSig  = TdSig TypeSig
+        { tsVar = serverDefN
+        , tsType = TConstrained
+            [ codecType "a" $ TQCon $ codecV "DecoderImpl"
+            , codecType "b" $ TQCon $ codecV "EncoderImpl"
+            , tApps' (TSimple className) tParams
+            ] $ TSimple "ca" `TArrow`
+                TSimple "cb" `TArrow`
+                TSimple "a" `TArrow`
+                transType (TQCon $ transV "ServerTransport")
+        }
+      serverDef  = TdDef Def
+        { dLhs    = serverDefN
+        , dParams = ["ca", "cb", "a", "qn", "k"]
+        , dRhs    = ECase (ESimple "qn")
+            [(PCon (transV "QualName") ["ns", "n"], e1)]
+        }
+        where
+          e1 = ECase (EBinary (ESimple "ns") "==" eNamespace)
+            [ (PSimple "False", ESimple "Nothing")
+            , (PSimple "True", e2)
+            ]
+          e2 = ECase (ESimple "n") $
+            serverAlts <> [(PSimple "_", ESimple "Nothing")]
+      serverDefN = "mk" <> transportName
+      nsSig      = TdSig TypeSig
+        { tsVar = nNamespace
+        , tsType = unsafeTCon "Data.Vector.Vector"
+            `TApp` unsafeTCon "Data.Text.Text"
+        }
+      nsDef      = TdDef Def
+        { dLhs    = nNamespace
+        , dParams = []
+        , dRhs    = moduleValue
+        }
+      tParams    = ["a", "f", "g", "m"]
+      allImports = fold funcImports
+        <> unsafeImportMods' ["Data.Vector", "Data.Text"]
+        <> importMods [codecId, transId]
+  pure (allImports, allDecls)
+
 
 makeType :: GuguguK r m => GType -> m (Set ImportDecl, Type)
 makeType GApp{..} = do
@@ -394,6 +502,22 @@ mkModuleCode Module{..} = do
   withTransformer transModuleCode $ \f ->
     NonEmpty.fromList $ packagePrefix <> [f moduleName]
 
+mkModuleValue :: GuguguK r m => Module -> m Exp
+mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->
+  EList [ESimple $ unsafeQuote $ f moduleName]
+
+mkModuleType :: GuguguK r m => Module -> Text -> m Text
+mkModuleType Module{..} suffix = withTransformer transModuleType $ \f ->
+  f $ moduleName <> suffix
+
+mkFuncCode :: GuguguK r m => Func -> m Text
+mkFuncCode Func{..} = withTransformer transFuncCode $ \f ->
+  f funcName
+
+mkFuncValue :: GuguguK r m => Func -> m Text
+mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
+  unsafeQuote $ f funcName
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -433,14 +557,32 @@ qSimple t = t :| []
 unsafeQ :: Text -> QualId
 unsafeQ = NonEmpty.fromList . splitOn' "."
 
+unsafeTCon :: Text -> Type
+unsafeTCon = TQCon . unsafeQ
+
+tApps' :: Type -> [Id] -> Type
+tApps' = foldl' (\z -> TApp z . TSimple)
+
 importMod' :: QualId -> ImportDecl
 importMod' qid = ImportDecl{ idModuleId = qid }
+
+importMods :: [QualId] -> Set ImportDecl
+importMods = Set.fromList . fmap importMod'
 
 importMods' :: QualId -> Set ImportDecl
 importMods' = Set.singleton . importMod'
 
 unsafeImportMods' :: [Text] -> Set ImportDecl
 unsafeImportMods' = Set.fromList . fmap (importMod' . unsafeQ)
+
+transParams :: [Id]
+transParams = ["f", "g", "m", "ra", "rb", "ha", "hb"]
+
+transType :: Type -> Type
+transType t = tApps' t transParams
+
+codecType :: Text -> Type -> Type
+codecType v t = tApps' t $ fmap (<> v) ["c", "r", "h", "f"]
 
 mkForeignCodecName :: GuguguK r m => Module -> Data -> m (Id, Id)
 mkForeignCodecName Module{..} Data{..} = do

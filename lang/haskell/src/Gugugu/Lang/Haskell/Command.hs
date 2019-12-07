@@ -36,11 +36,14 @@ guguguHaskellMain = runExceptIO $ do
   GuguguCmdOption{..} <- execParser' optParser version
   modules <- loadAllModules inputDir
   allFiles <- makeFiles opts modules
-  let (maybeCodecFile, fs) = Map.updateLookupWithKey (\_ _ -> Nothing)
-                             codecPath allFiles
-      codecPath            = runtimeFile "Codec"
-      runtimeFile name     = foldr (\x z -> T.unpack x </> z)
-                             (name <.> "hs") (runtimeMod opts)
+  let (maybeCodecFile, fs)  = Map.updateLookupWithKey (\_ _ -> Nothing)
+                              codecPath fs'
+      (maybeTransFile, fs') = Map.updateLookupWithKey (\_ _ -> Nothing)
+                              transPath allFiles
+      codecPath             = runtimeFile "Codec"
+      transPath             = runtimeFile "Transport"
+      runtimeFile name      = foldr (\x z -> T.unpack x </> z)
+                              (name <.> "hs") (runtimeMod opts)
   liftIO $ do
     let writePartial path embeded maybePart = for_ maybePart $ \part -> do
           let fullPath = outputDir </> path
@@ -51,6 +54,10 @@ guguguHaskellMain = runExceptIO $ do
             T.hPutStr h "\n\n"
             B.hPut h embeded
     writePartial codecPath codecFile maybeCodecFile
+    let transFile = f withServer serverFile
+                  $ transportCommonFile
+          where f p x z = if p opts then z <> "\n\n" <> x else z
+    writePartial transPath transFile maybeTransFile
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
 
@@ -78,7 +85,7 @@ optParser = do
     , help $ "deriving clause for data type, use comma to separate multiples, "
           <> "e.g. Eq,Show"
     ]
-  withCodec <- pWithCodec
+  ~(withCodec, withServer, withClient) <- pWithCodecServerClient
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
     { transModuleCode  = NoTransform
     , transModuleValue = ToSnake
@@ -104,3 +111,9 @@ optParser = do
 
 codecFile :: ByteString
 codecFile = $(embedFile "runtime/Codec.hs")
+
+transportCommonFile :: ByteString
+transportCommonFile = $(embedFile "runtime/Transport.hs")
+
+serverFile :: ByteString
+serverFile = $(embedFile "runtime/Server.hs")

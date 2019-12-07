@@ -20,4 +20,5 @@ gugugu-haskell \
 	--package-prefix=GuguguExamples.Definitions \
 	--derivings=Show \
 	--with-codec \
+	--with-server \
 	;
