@@ -131,6 +131,7 @@ dclass    → qtycls
 data DataDecl
   = DataDecl
     { ddName      :: Id
+    , ddTvs       :: [Id]
     , ddCons      :: [Constr]
     , ddDerivings :: [QualId]
     }
@@ -318,6 +319,7 @@ fielddecl → vars :: (type | ! atype)
 data Constr
   = Constr Id
   | CRecord Id [(Id, Type)]
+  | CEQ [Id] [Type] Id [Type]
   deriving Show
 
 
@@ -388,6 +390,9 @@ instance SrcComp DataDecl where
     doIndent
     writeText "data "
     writeText ddName
+    for_ ddTvs $ \tv -> do
+      writeText " "
+      writeText tv
     let writeDerivings  = do
           writeText "deriving "
           case ddDerivings of
@@ -548,3 +553,14 @@ instance SrcComp Constr where
               writeField f'
             doIndent
             writeText "}"
+    CEQ tvs ks n fs  -> do
+      writeText "forall"
+      for_ tvs $ \tv -> do
+        writeText " "
+        writeText tv
+      writeText ". "
+      writeConstraint ks
+      writeText n
+      for_ fs $ \f -> do
+        writeText " "
+        writeSrcComp f

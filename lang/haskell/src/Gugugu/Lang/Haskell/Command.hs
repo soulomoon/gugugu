@@ -54,7 +54,7 @@ guguguHaskellMain = runExceptIO $ do
             T.hPutStr h "\n\n"
             B.hPut h embeded
     writePartial codecPath codecFile maybeCodecFile
-    let transFile = f withServer serverFile
+    let transFile = f withClient clientFile . f withServer serverFile
                   $ transportCommonFile
           where f p x z = if p opts then z <> "\n\n" <> x else z
     writePartial transPath transFile maybeTransFile
@@ -117,3 +117,6 @@ transportCommonFile = $(embedFile "runtime/Transport.hs")
 
 serverFile :: ByteString
 serverFile = $(embedFile "runtime/Server.hs")
+
+clientFile :: ByteString
+clientFile = $(embedFile "runtime/Client.hs")

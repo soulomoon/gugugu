@@ -96,11 +96,11 @@ makeModules opts@GuguguHaskellOption{..} modules = do
   let (foreigns, files) = unzip foreignAndFiles
   let ((foreignImports, foreignTops), (foreignEncodes, foreignDecodes)) =
         fold foreigns
-  let allFiles    = Map.fromList $
+  let allFiles     = Map.fromList $
            files
         <> [(codecPath, codecModule) | withCodec]
         <> [(transPath, transModule) | withServer || withClient]
-      codecModule = HaskellModule
+      codecModule  = HaskellModule
         { hmExts    = ["FunctionalDependencies", "MultiParamTypeClasses"]
         , hmId      = codecModId
         , hmImports = Set.toAscList $
@@ -117,17 +117,35 @@ makeModules opts@GuguguHaskellOption{..} modules = do
             , cdTVars = ["c", "f"]
             , cdDecls = ds
             }
-      transModule = HaskellModule
+      transModule  = HaskellModule
         { hmExts    = ["ExistentialQuantification", "RankNTypes"]
         , hmId      = transModId
         , hmImports = Set.toAscList $
+            (if withClient then importMods' codecModId else Set.empty) <>
             unsafeImportMods' ["Data.Text", "Data.Vector"]
-        , hmDecls   = []
+        , hmDecls   = [guguguClient | withClient]
         }
-      codecPath   = modulePath codecModId
-      transPath   = modulePath transModId
-      codecModId  = NonEmpty.fromList $ runtimeMod <> ["Codec"]
-      transModId  = NonEmpty.fromList $ runtimeMod <> ["Transport"]
+      guguguClient = TdData DataDecl
+        { ddName      = "GuguguClient"
+        , ddTvs       = transParams
+        , ddCons      = [gcCon]
+        , ddDerivings = []
+        }
+        where gcCon    = CEQ
+                ["ca", "cb", "fa", "fb"]
+                [ codecType "a" $ TQCon $ codecV "EncoderImpl"
+                , codecType "b" $ TQCon $ codecV "DecoderImpl"
+                ]
+                "MkGuguguClient"
+                [ TSimple "ca"
+                , TSimple "cb"
+                , TParen $ transType $ TSimple "ClientTransport"
+                ]
+      codecV n     = codecModId <> (n :| [])
+      codecPath    = modulePath codecModId
+      transPath    = modulePath transModId
+      codecModId   = NonEmpty.fromList $ runtimeMod <> ["Codec"]
+      transModId   = NonEmpty.fromList $ runtimeMod <> ["Transport"]
   pure allFiles
 
 makeModule :: GuguguK r m
@@ -151,6 +169,7 @@ makeModule md@Module{..} = do
                   then ["OverloadedLists", "MultiParamTypeClasses"]
                   else []
                )
+            <> ["FlexibleInstances" | withClient && hasTrans]
         , hmId      = mod'
         , hmImports = Set.toAscList $ imports <> imports' <> imports''
         , hmDecls   = decs <> transports <> instDecs
@@ -173,6 +192,7 @@ makeData d@Data{..} = do
         pure (iField, (fieldCode, hsType))
       let dataDec = TdData DataDecl
             { ddName      = dataCode
+            , ddTvs       = []
             , ddCons      = [CRecord dataCode fields]
             , ddDerivings = fmap qSimple derivings
             }
@@ -184,6 +204,7 @@ makeData d@Data{..} = do
         pure $ Constr enumCode
       let dataDec = TdData DataDecl
             { ddName      = dataCode
+            , ddTvs       = []
             , ddCons      = toList constrs
             , ddDerivings = fmap qSimple derivings
             }
@@ -373,18 +394,32 @@ makeTransports md@Module{..} = do
                      (TSimple "m" `TApp` TParen (TSimple "g" `TApp` fcd))
           }
         serverAlt = (PSimple funcValue, ESimple "Just" `EApp` serverExp)
+        clientDef = DDef Def
+          { dLhs    = funcCode
+          , dParams = ["c"]
+          , dRhs    = ECase (ESimple "c")
+              [(PCon (transV "MkGuguguClient") ["ca", "cb", "k"], clientExp)]
+          }
         serverExp = EParen $ ESimple "k"
           `EApp` eCodec "decodeValue" "ca"
           `EApp` eCodec "encodeValue" "cb"
           `EApp` EParen (ESimple funcCode `EApp` ESimple "a")
-    pure (fdImports <> fcdImports, funcSig, serverAlt)
+        clientExp = ESimple "k"
+          `EApp` eCodec "encodeValue" "ca"
+          `EApp` eCodec "decodeValue" "cb"
+          `EApp` EParen eQn
+          where eQn = EQual (transV "QualName")
+                  `EApp` eNamespace `EApp` ESimple funcValue
+    pure (fdImports <> fcdImports, funcSig, serverAlt, clientDef)
   className <- mkModuleType md "Module"
   transportName <- mkModuleType md "Transport"
   moduleValue <- mkModuleValue md
-  let (funcImports, classFuncs, serverAlts) = unzip3 transportComps
+  let (funcImports, classFuncs, serverAlts, clientDecs) =
+        List.unzip4 transportComps
   let allDecls   = [classDec]
                 <> (if withServer then allServers else [])
                 <> [nsSig, nsDef]
+                <> [clientInst | withClient]
       classDec   = TdClass ClassDecl
         { cdName  = className
         , cdTVars = tParams
@@ -416,6 +451,14 @@ makeTransports md@Module{..} = do
           e2 = ECase (ESimple "n") $
             serverAlts <> [(PSimple "_", ESimple "Nothing")]
       serverDefN = "mk" <> transportName
+      clientInst = TdInst InstDecl
+        { idClass = qSimple className
+        , idTypes =
+            [ TParen $ transType $ TQCon $ transV "GuguguClient"
+            , TSimple "f", TSimple "g", TSimple "m"
+            ]
+        , idDecls = clientDecs
+        }
       nsSig      = TdSig TypeSig
         { tsVar = nNamespace
         , tsType = unsafeTCon "Data.Vector.Vector"

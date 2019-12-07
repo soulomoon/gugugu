@@ -21,4 +21,5 @@ gugugu-haskell \
 	--derivings=Show \
 	--with-codec \
 	--with-server \
+	--with-client \
 	;
