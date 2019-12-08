@@ -123,7 +123,9 @@ makeModules opts@GuguguHaskellOption{..} modules = do
         , hmImports = Set.toAscList $
             (if withClient then importMods' codecModId else Set.empty) <>
             unsafeImportMods' ["Data.Text", "Data.Vector"]
-        , hmDecls   = [guguguClient | withClient]
+        , hmDecls   = if withClient
+            then [guguguClient, mkGCTypeSig, mkGCDef]
+            else []
         }
       guguguClient = TdData DataDecl
         { ddName      = "GuguguClient"
@@ -141,6 +143,21 @@ makeModules opts@GuguguHaskellOption{..} modules = do
                 , TSimple "cb"
                 , TParen $ transType $ TSimple "ClientTransport"
                 ]
+      mkGCTypeSig  = TdSig TypeSig
+        { tsVar  = "mkGuguguClient'"
+        , tsType = TConstrained
+            [ codecType' "a" $ (TQCon $ codecV "EncoderImpl")
+            , codecType' "b" $ (TQCon $ codecV "DecoderImpl")
+            ] $ TSimple "c" `TArrow`
+                transType' (TSimple "ClientTransport'") `TArrow`
+                transType' (TSimple "GuguguClient'")
+        }
+      mkGCDef      = TdDef Def
+        { dLhs    = "mkGuguguClient'"
+        , dParams = ["c"]
+        , dRhs    = ESimple "MkGuguguClient"
+            `EApp` ESimple "c" `EApp` ESimple "c"
+        }
       codecV n     = codecModId <> (n :| [])
       codecPath    = modulePath codecModId
       transPath    = modulePath transModId
@@ -425,7 +442,7 @@ makeTransports md@Module{..} = do
         , cdTVars = tParams
         , cdDecls = classFuncs
         }
-      allServers = [serverSig, serverDef]
+      allServers = [serverSig, serverDef, serverSig', serverDef']
       serverSig  = TdSig TypeSig
         { tsVar = serverDefN
         , tsType = TConstrained
@@ -450,6 +467,21 @@ makeTransports md@Module{..} = do
             ]
           e2 = ECase (ESimple "n") $
             serverAlts <> [(PSimple "_", ESimple "Nothing")]
+      serverSig' = TdSig TypeSig
+        { tsVar = serverDefN <> "'"
+        , tsType = TConstrained
+            [ codecType' "a" $ TQCon $ codecV "DecoderImpl"
+            , codecType' "b" $ TQCon $ codecV "EncoderImpl"
+            , tApps' (TSimple className) ["a", "f", "f", "m"]
+            ] $ TSimple "c" `TArrow`
+                TSimple "a" `TArrow`
+                transType' (TQCon $ transV "ServerTransport'")
+        }
+      serverDef' = TdDef Def
+        { dLhs    = serverDefN <> "'"
+        , dParams = ["c"]
+        , dRhs    = ESimple serverDefN `EApp` ESimple "c" `EApp` ESimple "c"
+        }
       serverDefN = "mk" <> transportName
       clientInst = TdInst InstDecl
         { idClass = qSimple className
@@ -624,8 +656,14 @@ transParams = ["f", "g", "m", "ra", "rb", "ha", "hb"]
 transType :: Type -> Type
 transType t = tApps' t transParams
 
+transType' :: Type -> Type
+transType' t = tApps' t ["f", "m", "r", "h"]
+
 codecType :: Text -> Type -> Type
 codecType v t = tApps' t $ fmap (<> v) ["c", "r", "h", "f"]
+
+codecType' :: Text -> Type -> Type
+codecType' v t = tApps' t ["c", "r", "h", "f" <> v]
 
 mkForeignCodecName :: GuguguK r m => Module -> Data -> m (Id, Id)
 mkForeignCodecName Module{..} Data{..} = do
