@@ -35,3 +35,13 @@ executables:
       - bytestring
       - wai
       - warp
+  gugugu-example-haskell-jsonhttp-client:
+    main:                jsonhttp-client.hs
+    source-dirs:         app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - gugugu-haskell-example
+      - http-client
