@@ -55,6 +55,7 @@ Targets
    :maxdepth: 2
    :caption: Targets
 
+   lang/python
    lang/scala
    lang/typescript
 

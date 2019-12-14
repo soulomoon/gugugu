@@ -103,10 +103,6 @@ class DecoderImpl(ForeignDecodersImpl[S], Generic[S, R]):
         raise NotImplementedError
 
     @abstractmethod
-    def decode_unit(self, s: S) -> Tuple[S, object]:
-        raise NotImplementedError
-
-    @abstractmethod
     def decode_maybe(self, s: S,
                      k: Callable[[S], Tuple[S, A]]) -> Tuple[S, Optional[A]]:
         raise NotImplementedError

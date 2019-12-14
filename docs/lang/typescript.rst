@@ -459,9 +459,9 @@ Command Line Options
                             [--trans-module-code ARG] [--trans-module-value ARG]
                             [--trans-module-type ARG] [--trans-func-code ARG]
                             [--trans-func-value ARG] [--trans-type-code ARG]
-                            [--trans-field-code ARG] [--trans-field-value ARG]
-                            [--trans-enum-code ARG] [--trans-enum-value ARG]
-                            [--version]
+                            [--trans-type-func ARG] [--trans-field-code ARG]
+                            [--trans-field-value ARG] [--trans-enum-code ARG]
+                            [--trans-enum-value ARG] [--version]
 
    Available options:
      -i,--input INPUT         the directory containing the definition files
@@ -480,6 +480,7 @@ Command Line Options
      --trans-func-code ARG    function name transformer for code (default: id)
      --trans-func-value ARG   function name transformer for value (default: snake)
      --trans-type-code ARG    type name transformer for code (default: id)
+     --trans-type-func ARG    type name transformer in function (default: id)
      --trans-field-code ARG   record field name transformer for code (default: id)
      --trans-field-value ARG  record field name transformer for
                               value (default: snake)
