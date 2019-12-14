@@ -13,6 +13,13 @@
 # import os
 # import sys
 # sys.path.insert(0, os.path.abspath("."))
+import yaml
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent
+
+with (PROJECT_ROOT / "hpack-common.yaml").open("rt") as h:
+    hpack_common = yaml.safe_load(h)[0]
 
 
 # -- Project information -----------------------------------------------------
@@ -22,7 +29,7 @@ copyright = "2019, Cosmia Fu"
 author = "Cosmia Fu"
 
 # The full version, including alpha/beta/rc tags
-release = "0.2.0.0"
+release = hpack_common["version"]
 
 
 # -- General configuration ---------------------------------------------------

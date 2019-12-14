@@ -11,6 +11,7 @@ module Gugugu.Lang.Typescript
   , makeFiles
   ) where
 
+import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifunctor
@@ -320,6 +321,7 @@ makeCodecDefs md d@Data{..} = do
       pure (mempty, encodeFDef, decodeFDef)
     Nothing                      -> do
       (importItem, tsThisName) <- resolveForeign' d
+      (encodeF, decodeF) <- mkForeignCodecName md d
       let encodeImpl         = MethodSignature
             { msName    = encodeF
             , msTParams = []
@@ -342,7 +344,6 @@ makeCodecDefs md d@Data{..} = do
             }
           encodeFDef         = ECall (eImpl `EMember` encodeF) [] [eS, eA]
           decodeFDef         = ECall (eImpl `EMember` decodeF) [] [eS]
-          (encodeF, decodeF) = foreignCodecName md d
           tsThis             = TParamed tsThisName []
           pS                 = Parameter
             { pModifiers = []
@@ -354,15 +355,17 @@ makeCodecDefs md d@Data{..} = do
       pure ( (Set.singleton importItem, ([encodeImpl], [decodeImpl]))
            , encodeFDef, decodeFDef
            )
+  encoderName <- mkTypeFunc $ "encode" <> dataName
+  decoderName <- mkTypeFunc $ "decode" <> dataName
   let encoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
-        , mvdName      = "encode" <> dataCode
+        , mvdName      = encoderName
         , mvdType      = TParamed encoderTypeName [tThis]
         , mvdDef       = EArrow encodeDef
         }
       decoderDef = MemberVariableDeclaration
         { mvdModifiers = [MPublic, MStatic]
-        , mvdName      = "decode" <> dataCode
+        , mvdName      = decoderName
         , mvdType      = TParamed decoderTypeName [tThis]
         , mvdDef       = EArrow decodeDef
         }
@@ -701,14 +704,18 @@ resolveTypeCodec t = do
     ResolutionError e -> throwError e
     LocalType d       -> do
       typeName <- mkTypeCode d
-      let f p = EMember (ESimple typeName) $ p <> typeName
-      pure (f "encode", f "decode")
+      let f p = do
+            funcName <- mkTypeFunc $ p <> dataName d
+            pure $ EMember (ESimple typeName) funcName
+      liftA2 (,) (f "encode") (f "decode")
     Imported md d     -> do
       typeName <- mkTypeCode d
       importedAlias <- mkGuguguImportAlias md
       let namespaced = ESimple importedAlias `EMember` typeName
-          f p        = EMember namespaced $ p <> typeName
-      pure (f "encode", f "decode")
+          f p        = do
+            funcName <- mkTypeFunc $ p <> dataName d
+            pure $ EMember namespaced $ funcName
+      liftA2 (,) (f "encode") (f "decode")
     Primitive _       ->
       let f ct = ESimple guguguCodecAlias `EMember` ct `EMember` T.toLower t
       in pure (f "Encoder", f "Decoder")
@@ -761,6 +768,10 @@ mkFuncValue :: GuguguK r m => Func -> m Expression
 mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
   ESimple $ unsafeQuote $ f funcName
 
+mkTypeFunc :: GuguguK r m => Text -> m Text
+mkTypeFunc name = withTransformer transTypeFunc $ \f ->
+  f name
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -796,12 +807,12 @@ guguguTransportAlias = "_gugugu_t"
 mkGuguguImportAlias :: GuguguK r m => Module -> m Text
 mkGuguguImportAlias Module{..} = pure $ "_gugugu_i_" <> moduleName
 
-foreignCodecName :: Module -> Data -> (Text, Text)
-foreignCodecName Module{..} Data{..} = ("encode" <> qName, "decode" <> qName)
-  where
-    qName = if moduleName == "Foreign"
-      then dataName
-      else moduleName <> dataName
+mkForeignCodecName :: GuguguK r m => Module -> Data -> m (Text, Text)
+mkForeignCodecName Module{..} Data{..} = do
+  let qName = if moduleName == "Foreign"
+        then dataName else moduleName <> dataName
+      f p   = mkTypeFunc $ p <> qName
+  liftA2 (,) (f "encode") (f "decode")
 
 nSimple :: Text -> NamespaceName
 nSimple t = NamespaceName $ t :| []

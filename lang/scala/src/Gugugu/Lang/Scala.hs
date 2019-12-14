@@ -11,6 +11,7 @@ module Gugugu.Lang.Scala
   , makeFiles
   ) where
 
+import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifoldable
@@ -296,20 +297,22 @@ makeCodecStats md d@Data{..} = do
               errorCases           = [(PSimple "_", eSimple "None")]
       pure (encodeFDef, decodeFDef)
     Nothing                      -> do
-      let encodeFDef         = ECall (eImpl `EMember` encodeF) [eS, eA]
-          decodeFDef         = ECall (eImpl `EMember` decodeF) [eS]
-          (encodeF, decodeF) = foreignCodecName md d
+      (encodeF, decodeF) <- mkForeignCodecName md d
+      let encodeFDef = ECall (eImpl `EMember` encodeF) [eS, eA]
+          decodeFDef = ECall (eImpl `EMember` decodeF) [eS]
       pure (encodeFDef, decodeFDef)
+  encoderName <- mkTypeFunc $ "encode" <> dataName
+  decoderName <- mkTypeFunc $ "decode" <> dataName
   let encoderDef = PatDef
         { pdModifiers = [MImplicit]
-        , pdPattern   = PSimple $ "encode" <> dataCode
+        , pdPattern   = PSimple encoderName
         , pdType      = Just t
         , pdDef       = ENew t $ Just [TMSF encodeDef]
         }
         where t = TParamed encoderTypeId [tThis]
       decoderDef = PatDef
         { pdModifiers = [MImplicit]
-        , pdPattern   = PSimple $ "decode" <> dataCode
+        , pdPattern   = PSimple decoderName
         , pdType      = Just t
         , pdDef       = ENew t $ Just [TMSF decodeDef]
         }
@@ -357,6 +360,7 @@ makeForeignDataCodecStats :: GuguguK r m
                           -> m ForeignTypeResult
 makeForeignDataCodecStats md@Module{..} d@Data{..} = do
   tThis <- (\i -> TParamed i []) <$> resolveForeign' d
+  (encodeF, decodeF) <- mkForeignCodecName md d
   let encodeImpl         = TMSD FunDcl
         { fdModifiers = []
         , fdName      = encodeF
@@ -371,7 +375,6 @@ makeForeignDataCodecStats md@Module{..} d@Data{..} = do
         , fdParams    = [pS]
         , fdRType     = TTuple $ tS :| [tThis]
         }
-      (encodeF, decodeF) = foreignCodecName md d
       tS                 = tSimple "S"
       pS                 = Param{ pName = "s", pType = tS }
   (encode, decode) <- makeCodecStats md d
@@ -623,6 +626,10 @@ mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
 
+mkTypeFunc :: GuguguK r m => Text -> m Text
+mkTypeFunc name = withTransformer transTypeFunc $ \f ->
+  f name
+
 mkFieldCode :: GuguguK r m => RecordField -> m Text
 mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
   f recordFieldName
@@ -655,10 +662,12 @@ guguguTransportPkg r =
   let GuguguScalaOption{..} = toGuguguScalaOption r
   in NonEmpty.fromList $ runtimePkg <> ["transport"]
 
-foreignCodecName :: Module -> Data -> (Text, Text)
-foreignCodecName Module{..} Data{..} = ("encode" <> qName, "decode" <> qName)
-  where qName = if moduleName == "Foreign"
-          then dataName else moduleName <> dataName
+mkForeignCodecName :: GuguguK r m => Module -> Data -> m (Text, Text)
+mkForeignCodecName Module{..} Data{..} = do
+  let qName = if moduleName == "Foreign"
+        then dataName else moduleName <> dataName
+      f p   = mkTypeFunc $ p <> qName
+  liftA2 (,) (f "encode") (f "decode")
 
 iSimple :: Text -> StableId
 iSimple t = StableId $ t :| []

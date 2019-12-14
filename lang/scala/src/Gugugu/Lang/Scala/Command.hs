@@ -83,6 +83,7 @@ optParser = do
     , transFuncCode    = NoTransform
     , transFuncValue   = ToSnake
     , transTypeCode    = NoTransform
+    , transTypeFunc    = NoTransform
     , transFieldCode   = NoTransform
     , transFieldValue  = ToSnake
     , transEnumCode    = NoTransform
