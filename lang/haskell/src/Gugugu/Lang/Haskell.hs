@@ -39,7 +39,7 @@ import           Gugugu.Lang.Haskell.SourceUtils
 -- | Option for 'makeFiles'
 data GuguguHaskellOption
   = GuguguHaskellOption
-    { packagePrefix    :: [Text]                  -- ^ Package prefix
+    { modulePrefix     :: [Text]                  -- ^ Module prefix
     , runtimeMod       :: [Text]                  -- ^ Runtime module
     , derivings        :: [Text]                  -- ^ derivings clause
     , withCodec        :: Bool                    -- ^ True if generate codec
@@ -575,7 +575,7 @@ mkModuleCode :: GuguguK r m => Module -> m QualId
 mkModuleCode Module{..} = do
   GuguguHaskellOption{..} <- asks toGuguguHaskellOption
   withTransformer transModuleCode $ \f ->
-    NonEmpty.fromList $ packagePrefix <> [f moduleName]
+    NonEmpty.fromList $ modulePrefix <> [f moduleName]
 
 mkModuleValue :: GuguguK r m => Module -> m Exp
 mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->

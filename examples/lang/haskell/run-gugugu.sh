@@ -17,7 +17,7 @@ rm -rf $SRC_OUTPUT
 gugugu-haskell \
 	--input=$EXAMPLE_DIR/gugugu \
 	--output=$SRC_OUTPUT \
-	--package-prefix=GuguguExamples.Definitions \
+	--module-prefix=GuguguExamples.Definitions \
 	--derivings=Show \
 	--with-codec \
 	--with-server \

@@ -64,19 +64,19 @@ guguguHaskellMain = runExceptIO $ do
 
 optParser :: Parser GuguguHaskellOption
 optParser = do
-  packagePrefix' <- strOption $ fold
-    [ long "package-prefix"
+  modulePrefix' <- strOption $ fold
+    [ long "module-prefix"
     , short 'p'
-    , metavar "PACKAGE_PREFIX"
-    , help "the package prefix, e.g. Some.Package.Prefix"
+    , metavar "MODULE_PREFIX"
+    , help "the package prefix, e.g. Some.Prefix"
     ]
   runtimeMod' <- strOption $ fold
     [ long "runtime-module"
     , short 'r'
     , value "Gugugu.Lang.Haskell.Runtime"
     , showDefault
-    , metavar "RUNTIME_PACKAGE"
-    , help "location of gugugu runtime package"
+    , metavar "RUNTIME_MODULE"
+    , help "location of gugugu runtime module"
     ]
   derivings' <- strOption $ fold
     [ long "derivings"
@@ -100,9 +100,9 @@ optParser = do
     , transEnumValue   = ToUpperSnake
     }
   pure GuguguHaskellOption
-    { packagePrefix = splitOn' "." packagePrefix'
-    , runtimeMod    = splitOn' "." runtimeMod'
-    , derivings     = splitOn' "," derivings'
+    { modulePrefix = splitOn' "." modulePrefix'
+    , runtimeMod   = splitOn' "." runtimeMod'
+    , derivings    = splitOn' "," derivings'
     , ..
     }
 
