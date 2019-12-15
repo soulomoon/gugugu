@@ -50,7 +50,8 @@ Primitives
 Record Type
 ~~~~~~~~~~~
 
-Record type are represented Haskell record.
+Record type are represented Haskell record
+with ``deriving`` clause specified in command line options.
 
 .. sourcecode:: haskell
 
@@ -74,7 +75,8 @@ becomes
 Enum Type
 ~~~~~~~~~
 
-Enum type are represented by Haskell sum type.
+Enum type are represented by Haskell sum type
+with ``deriving`` clause specified in command line options.
 
 .. sourcecode:: haskell
 
