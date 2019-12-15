@@ -1,0 +1,36 @@
+_hpack-common:  !include ../../hpack-common.yaml
+<<:             *toplevel
+
+name:           gugugu-lang-haskell
+
+dependencies:
+  - base >= 4.12 && < 5
+
+library:
+  source-dirs: src
+
+  dependencies:
+    - gugugu-core
+    - gugugu-utils
+
+    - bytestring
+    - containers
+    - directory
+    - filepath
+    - mtl
+    - text
+
+    - optparse-applicative
+
+    - file-embed
+
+executables:
+  gugugu-haskell:
+    main:                gugugu-haskell.hs
+    source-dirs:         app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - gugugu-lang-haskell

@@ -10,14 +10,19 @@ def main():
     with open(PROJECT_ROOT / "stack.yaml") as h:
         stack_yaml = yaml.load(h, Loader=yaml.SafeLoader)
     for pkg in stack_yaml["packages"]:
-        pkg_dir = PROJECT_ROOT / pkg
-        for d in ["src", "app"]:
-            src_dir = pkg_dir / d
-            for p in src_dir.glob("**/*.hs"):
-                apply_stylish_haskell(p)
+        apply_stylish_haskell_pkg(PROJECT_ROOT / pkg)
+    apply_stylish_haskell_pkg(PROJECT_ROOT / "examples/lang/haskell")
+
+
+def apply_stylish_haskell_pkg(pkg_dir: Path):
+    for d in ["src", "app"]:
+        src_dir = pkg_dir / d
+        for p in src_dir.glob("**/*.hs"):
+            apply_stylish_haskell(p)
 
 
 def apply_stylish_haskell(path: Path):
+    print(f"Applying stylish-haskell to: {path}")
     subprocess.check_call([
         "stylish-haskell",
         "-i",

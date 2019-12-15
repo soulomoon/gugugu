@@ -2,6 +2,7 @@ module Foreign where
 
 
 data DateTime
-  {-# FOREIGN python     datetime.datetime       #-}
-  {-# FOREIGN scala      java.time.LocalDateTime #-}
-  {-# FOREIGN typescript "moment".Moment         #-}
+  {-# FOREIGN haskell    Data.Time.LocalTime.LocalTime #-}
+  {-# FOREIGN python     datetime.datetime             #-}
+  {-# FOREIGN scala      java.time.LocalDateTime       #-}
+  {-# FOREIGN typescript "moment".Moment               #-}

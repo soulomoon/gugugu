@@ -1,4 +1,11 @@
 jsonhttp:
+  haskell:
+    server:
+      command: stack exec -- gugugu-example-haskell-jsonhttp-server
+      cwd: examples/lang/haskell
+    client:
+      command: stack exec -- gugugu-example-haskell-jsonhttp-client
+      cwd: examples/lang/haskell
   python:
     server:
       command: python -m guguguexamples.jsonhttp.server

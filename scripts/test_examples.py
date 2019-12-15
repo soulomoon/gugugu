@@ -18,6 +18,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--verbose", "-v", action="count", default=0,
                         help="be more verbose")
+    parser.add_argument("--only", help="only test this target")
     args = parser.parse_args()
     verbosity = args.verbose
     suite = TestSuite()
@@ -28,7 +29,10 @@ def main():
             server_suite = TestSuiteWithServer(server)
             for client in clients:
                 test_case = GuguguExampleTestCase(protocol, client, server)
-                server_suite.addTest(test_case)
+                if args.only is None \
+                        or client.name == args.only \
+                        or server.name == args.only:
+                    server_suite.addTest(test_case)
             protocol_suite.addTest(server_suite)
         suite.addTest(protocol_suite)
 

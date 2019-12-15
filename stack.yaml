@@ -31,6 +31,7 @@ resolver: lts-14.0
 packages:
   - core
   - utils
+  - lang/haskell
   - lang/python
   - lang/scala
   - lang/typescript
@@ -43,8 +44,10 @@ packages:
 # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
-#
-# extra-deps: []
+
+# We do not want to always build it.
+extra-deps:
+  - examples/lang/haskell
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
