@@ -1,0 +1,32 @@
+_hpack-common:  !include ../../hpack-common.yaml
+<<:             *toplevel
+
+name:           gugugu-lang-rust
+
+dependencies:
+  - base >= 4.12 && < 5
+
+library:
+  source-dirs: src
+
+  dependencies:
+    - gugugu-core
+    - gugugu-utils
+
+    - containers
+    - filepath
+    - mtl
+    - text
+
+    - optparse-applicative
+
+executables:
+  gugugu-rust:
+    main:                gugugu-rust.hs
+    source-dirs:         app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - gugugu-lang-rust

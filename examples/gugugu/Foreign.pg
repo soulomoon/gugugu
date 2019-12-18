@@ -4,5 +4,6 @@ module Foreign where
 data DateTime
   {-# FOREIGN haskell    Data.Time.LocalTime.LocalTime #-}
   {-# FOREIGN python     datetime.datetime             #-}
+  {-# FOREIGN rust       chrono::NaiveDateTime         #-}
   {-# FOREIGN scala      java.time.LocalDateTime       #-}
   {-# FOREIGN typescript "moment".Moment               #-}

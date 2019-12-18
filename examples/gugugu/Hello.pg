@@ -33,7 +33,8 @@ data UseAllTypes
     , iDouble    :: Double
     , iString    :: String
     , iList      :: List UseAllTypes
-    , iMaybe     :: Maybe UseAllTypes
+    -- This recursive type is not supported by rust yet
+    -- , iMaybe     :: Maybe UseAllTypes
     , iEnum      :: Operation
     , iForeignDt :: DateTime
     }
