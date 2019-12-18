@@ -101,7 +101,10 @@ makeModules opts@GuguguHaskellOption{..} modules = do
         <> [(codecPath, codecModule) | withCodec]
         <> [(transPath, transModule) | withServer || withClient]
       codecModule  = HaskellModule
-        { hmExts    = ["FunctionalDependencies", "MultiParamTypeClasses"]
+        { hmExts    = [ "FunctionalDependencies"
+                      , "MultiParamTypeClasses"
+                      , "KindSignatures"
+                      ]
         , hmId      = codecModId
         , hmImports = Set.toAscList $
                unsafeImportMods' ["Data.Int", "Data.Text", "Data.Vector"]
@@ -114,7 +117,7 @@ makeModules opts@GuguguHaskellOption{..} modules = do
         where
           fClass n ds = TdClass ClassDecl
             { cdName  = n
-            , cdTVars = ["c", "f"]
+            , cdTVars = ["c", "(f :: * -> *)"]  -- Keep it simple
             , cdDecls = ds
             }
       transModule  = HaskellModule
