@@ -19,4 +19,5 @@ gugugu-rust \
 	--output=$SRC_OUTPUT \
 	--module-prefix=definitions \
 	--derives=Debug,PartialEq \
+	--with-codec \
 	;

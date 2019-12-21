@@ -11,8 +11,10 @@ module Gugugu.Lang.Rust
   , makeFiles
   ) where
 
+import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Data.Bifunctor
 import           Data.Foldable
 import qualified Data.List                    as List
 import           Data.List.NonEmpty           (NonEmpty (..))
@@ -36,6 +38,7 @@ data GuguguRustOption
     { modulePrefix     :: [Text]                  -- ^ Module prefix
     , runtimeMod       :: [Text]                  -- ^ Runtime module
     , derivings        :: [Text]                  -- ^ derive attribute
+    , withCodec        :: Bool                    -- ^ True if generate codec
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -61,6 +64,8 @@ data GuguguRustEnv
     }
   deriving Show
 
+type ForeignItems = ([TraitItem], [TraitItem])
+
 class HasGuguguRustOption a where
   toGuguguRustOption :: a -> GuguguRustOption
 
@@ -71,7 +76,7 @@ makeModules :: MonadError String m
 makeModules opts@GuguguRustOption{..} modules = do
   let moduleMap = Map.fromList $
         fmap (\md@Module{..} -> (moduleName, md)) modules
-  files <- for modules $ \md -> do
+  foreignAndFiles <- for modules $ \md -> do
     let rCtx = ResolutionContext
           { rcModules       = moduleMap
           , rcCurrentModule = md
@@ -81,12 +86,33 @@ makeModules opts@GuguguRustOption{..} modules = do
           , gCtx  = rCtx
           }
     runReaderT (makeModule md) env
+  let (foreigns, files) = unzip foreignAndFiles
+  let (foreignEncodes, foreignDecodes) = fold foreigns
   let allFiles      = Map.fromList $
            withGroup files
         <> [(runtimePath "mod", runtimeCrate)]
+        <> [(runtimePath "foreign", foreignCrate) | withCodec]
       runtimeCrate  = Crate
-        { cItems = []
+        { cItems = fmap modItem $
+               (if withCodec then ["codec", "foreign"] else [])
         }
+      foreignCrate  = Crate
+        { cItems =
+            [ fTrait "ForeignEncodersImpl" foreignEncodes
+            , fTrait "ForeignDecodersImpl" foreignDecodes
+            ]
+        }
+        where
+          fTrait n fs = noAttr $ ITrait Trait
+            { tName    = n
+            , tTParams = []
+            , tItems   = fmap ttSimple ["Error", "State"] <> fs
+            }
+          ttSimple n  = TT TraitType
+            { ttName   = n
+            , ttBounds = []
+            , ttBody   = Nothing
+            }
       runtimePath n = modulePath $ NonEmpty.fromList $ runtimeMod <> [n]
       withGroup fs  = case NonEmpty.nonEmpty modulePrefix of
         Just groupMod ->
@@ -99,13 +125,17 @@ makeModules opts@GuguguRustOption{..} modules = do
         Nothing       -> fs
   pure allFiles
 
-makeModule :: GuguguK r m => Module -> m (FilePath, Crate)
+makeModule :: GuguguK r m => Module -> m (ForeignItems, (FilePath, Crate))
 makeModule md@Module{..} = do
+  GuguguRustOption{..} <- asks toGuguguRustOption
   items <- traverse makeData moduleDatas
+  foreignAndCodecItems <- if withCodec
+    then traverse (makeCodecImpls md) moduleDatas else pure mempty
   mod' <- mkModuleCode md
-  let crate = Crate{ cItems = items }
+  let (foreigns, codecItems) = fold foreignAndCodecItems
+  let crate = Crate{ cItems = items <> codecItems }
       path  = modulePath mod'
-  pure (path, crate)
+  pure (foreigns, (path, crate))
 
 makeData :: GuguguK r m => Data -> m Item
 makeData d@Data{..} = do
@@ -146,6 +176,140 @@ makeData d@Data{..} = do
             }
       pure struct
 
+makeCodecImpls :: GuguguK r m => Module -> Data -> m (ForeignItems, [Item])
+makeCodecImpls md d@Data{..} = do
+  GuguguRustOption{..} <- asks toGuguguRustOption
+  dataCode <- mkTypeCode d
+  let thisType = TSimple dataCode
+      eCallC   = EMethod $ ESimple "c"
+      eS       = ESimple "s"
+      codecT n = TPath $ NonEmpty.fromList $
+        ["crate"] <> runtimeMod <> ["codec", n]
+  (foreignItems, encodeExpr, decodeExpr) <- case dataConDef of
+    Just (DRecord RecordCon{..}) -> do
+      let eCallC1 = EMethod $ ESimple "c1"
+      codecComps <- for (indexed recordConFields) $ \(i, rf) -> do
+        fieldCode <- mkFieldCode rf
+        fieldValue <- mkFieldValue rf
+        let encodeStmt  = SLet sn $ EPropagate $
+              eCallC1 "encode_record_field"
+                [ eSPrevious
+                , eI
+                , fieldValue
+                , EBorrow $ ESimple "a1" `EField` fieldCode
+                ]
+            decodeStmt  = SLet (PTuple [sn, PSimple vn]) $ EPropagate $
+              eCallC1 "decode_record_field"
+                [ eSPrevious
+                , eI
+                , fieldValue
+                ]
+            decodeField = (fieldCode, ESimple vn)
+            eI          = ESimple $ showText i
+            eSPrevious  = ESimple $ "s" <> showText (i + 1)
+            sn          = PSimple $ "s" <> showText (i + 2)
+            vn          = "v" <> showText i
+        pure (encodeStmt, decodeStmt, decodeField)
+      let (encodeStmts, decodeStmts, decodeFields) = unzip3 codecComps
+      let encodeExpr = eCallC "encode_record"
+            [ eS
+            , eN
+            , ESimple "a"
+            , EClosure ["c1", "s1", "a1"] $ EBlock encodeStmts $ ok eSl
+            ]
+          decodeExpr = eCallC "decode_record"
+            [ eS
+            , eN
+            , EClosure ["c1", "s1"] $ EBlock decodeStmts $ ok $
+                ETuple [eSl, EStruct (ESimple dataCode) decodeFields]
+            ]
+          ok e       = ESimple "Ok" `ECall` [e]
+          eN         = ESimple $ showText nFields
+          eSl        = ESimple $ "s" <> showText (nFields + 1)
+          nFields    = length recordConFields
+      pure (mempty, encodeExpr, decodeExpr)
+    Just (DEnum names)           -> do
+      codecCases <- for (indexed $ toList names) $ \(i, name) -> do
+        enumCode <- mkEnumCode name
+        enumValue <- mkEnumValue name
+        let encodeCase = (PPath enumPath, (ESimple cI, ESimple enumValue))
+            decodeCase = ((PSimple cI, PSimple enumValue), decoded)
+            enumPath   = dataCode :| [enumCode]
+            decoded    = ESimple "Some" `ECall` [EPath enumPath]
+            cI         = showText i
+        pure (encodeCase, decodeCase)
+      let (encodeCases, decodeCases) = unzip codecCases
+      let encodeExpr   = eCallC "encode_enum"
+            [ eS
+            , ESimple "a"
+            , asF fst
+            , asF snd
+            ]
+            where asF selector = EClosure ["x"] $ EMatch (ESimple "x") $
+                       fmap (second selector) encodeCases
+          decodeExpr   = eCallC "decode_enum"
+            [ eS
+            , byF "i" fst
+            , byF "n" snd
+            ]
+            where byF arg selector = EClosure [arg] $ EMatch (ESimple arg) $
+                       fmap (first selector) decodeCases
+                    <> [(PSimple "_", ESimple "None")]
+      pure (mempty, encodeExpr, decodeExpr)
+    Nothing                      -> do
+      tPath <- resolveForeign' d
+      (encodeName, decodeName) <- mkForeignCodecName md d
+      let encodeExpr    = eCallC encodeName [eS, ESimple "a"]
+          decodeExpr    = eCallC decodeName [eS]
+          foreignItems  = ([foreignEncode], [foreignDecode])
+          foreignEncode = TF Function
+            { fName    = encodeName
+            , fTParams = []
+            , fParams  =
+                [fpRefSelf,  fpSimple "s" tS, fpSimple "v" $ TRef rsType]
+            , fRType   = TSimple "Result" `tParam` [tS, tE]
+            , fWhere   = []
+            , fBody    = Nothing
+            }
+          foreignDecode  = TF Function
+            { fName    = decodeName
+            , fTParams = []
+            , fParams  = [fpRefSelf,  fpSimple "s" tS]
+            , fRType   = TSimple "Result" `tParam` [TTuple [tS, rsType], tE]
+            , fWhere   = []
+            , fBody    = Nothing
+            }
+          tS     = TPath $ "Self" :| ["State"]
+          tE     = TPath $ "Self" :| ["Error"]
+          rsType = either TSimple TPath tPath
+      pure (foreignItems, encodeExpr, decodeExpr)
+  let allItems   = fmap (noAttr . ITraitImpl) [encodeImpl, decodeImpl]
+      encodeImpl = codecImpl "Encoding" "EncoderImpl" "encode"
+        [fpSimple "a" $ TRef thisType] tS encodeExpr
+      decodeImpl = codecImpl "Decoding" "DecoderImpl" "decode"
+        [] (TTuple [tS, thisType]) decodeExpr
+      codecImpl traitName implName funcName param rtype expr = TraitImpl
+        { tiTrait   = codecT traitName
+        , tiTParams = []
+        , tiFor     = thisType
+        , tiWhere   = []
+        , tiItems   = [func]
+        }
+        where func = TF Function
+                { fName    = funcName
+                , fTParams = ["C"]
+                , fParams  = [fpSimple "s" tS]
+                          <> param
+                          <> [fpSimple "c" $ TRef $ TSimple "C"]
+                , fRType   = tResult $ rtype
+                , fWhere   = [(tC, [codecT implName])]
+                , fBody    = Just expr
+                }
+      tResult t  = tParam (TSimple "Result") [t, tE]
+      tS         = TPath $ "C" :| ["State"]
+      tE         = TPath $ "C" :| ["Error"]
+      tC         = TSimple "C"
+  pure (foreignItems, allItems)
 
 
 makeType :: GuguguK r m => GType -> m Type
@@ -207,13 +371,25 @@ mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
 
+mkTypeFunc :: GuguguK r m => Text -> m Text
+mkTypeFunc name = withTransformer transTypeFunc $ \f ->
+  f name
+
 mkFieldCode :: GuguguK r m => RecordField -> m Text
 mkFieldCode RecordField{..} = withTransformer transFieldCode $ \f ->
   f recordFieldName
 
+mkFieldValue :: GuguguK r m => RecordField -> m Expression
+mkFieldValue RecordField{..} = withTransformer transFieldValue $ \f ->
+  ESimple $ unsafeQuote $ f recordFieldName
+
 mkEnumCode :: GuguguK r m => Text -> m Text
 mkEnumCode name = withTransformer transEnumCode $ \f ->
   f name
+
+mkEnumValue :: GuguguK r m => Text -> m Text
+mkEnumValue name = withTransformer transEnumValue $ \f ->
+  unsafeQuote $ f name
 
 
 -- Utilities
@@ -221,8 +397,27 @@ mkEnumCode name = withTransformer transEnumCode $ \f ->
 thisTarget :: Text
 thisTarget = "rust"
 
+mkForeignCodecName :: GuguguK r m
+                   => Module
+                   -> Data
+                   -> m (Identifier, Identifier)
+mkForeignCodecName Module{..} Data{..} = do
+  let qName = if moduleName == "Foreign"
+        then dataName else moduleName <> dataName
+      f p   = mkTypeFunc $ p <> qName
+  liftA2 (,) (f "encode") (f "decode")
+
 modItem :: Identifier -> Item
 modItem n = noAttr $ IModule RsModule{ mName = n }
+
+fpRefSelf :: FunctionParam
+fpRefSelf = fpSimple "self" $ TRef $ TSimple "Self"
+
+fpSimple :: Identifier -> Type -> FunctionParam
+fpSimple p t = FunctionParam
+  { fpPattern = PSimple p
+  , fpType    = t
+  }
 
 tParam :: Type -> [Type] -> Type
 tParam t tps = TParam t tps []
