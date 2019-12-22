@@ -9,3 +9,7 @@ pub mod gugugu {
 
 #[path = "../target/generated/gugugu/definitions/mod.rs"]
 pub mod definitions;
+
+pub mod codec;
+
+pub mod utils;
