@@ -13,6 +13,10 @@ jsonhttp:
     client:
       command: python -m guguguexamples.jsonhttp.client
       cwd: examples/lang/python
+  rust:
+    server:
+      command: cargo run --bin gugugu-example-rust-jsonhttp-server
+      cwd: examples/lang/rust
   scala:
     server:
       command: gradle runJsonHttpServer

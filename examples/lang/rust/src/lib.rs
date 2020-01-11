@@ -12,4 +12,6 @@ pub mod definitions;
 
 pub mod codec;
 
+pub mod jsonhttp;
+
 pub mod utils;
