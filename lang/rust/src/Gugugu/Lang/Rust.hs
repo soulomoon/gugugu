@@ -15,6 +15,7 @@ import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Bifunctor
+import           Data.Char
 import           Data.Foldable
 import qualified Data.List                    as List
 import           Data.List.NonEmpty           (NonEmpty (..))
@@ -39,6 +40,8 @@ data GuguguRustOption
     , runtimeMod       :: [Text]                  -- ^ Runtime module
     , derivings        :: [Text]                  -- ^ derive attribute
     , withCodec        :: Bool                    -- ^ True if generate codec
+    , withServer       :: Bool                    -- ^ True if generate server
+    , withClient       :: Bool                    -- ^ True if generate client
     , nameTransformers :: GuguguNameTransformers  -- ^ Name transformers
     }
   deriving Show
@@ -95,6 +98,7 @@ makeModules opts@GuguguRustOption{..} modules = do
       runtimeCrate  = Crate
         { cItems = fmap modItem $
                (if withCodec then ["codec", "foreign"] else [])
+            <> ["transport" | withServer || withClient]
         }
       foreignCrate  = Crate
         { cItems =
@@ -131,9 +135,11 @@ makeModule md@Module{..} = do
   items <- traverse makeData moduleDatas
   foreignAndCodecItems <- if withCodec
     then traverse (makeCodecImpls md) moduleDatas else pure mempty
+  transportItems <- if (withServer || withClient) && not (null moduleFuncs)
+    then makeTransports md else pure mempty
   mod' <- mkModuleCode md
   let (foreigns, codecItems) = fold foreignAndCodecItems
-  let crate = Crate{ cItems = items <> codecItems }
+  let crate = Crate{ cItems = items <> transportItems <> codecItems }
       path  = modulePath mod'
   pure (foreigns, (path, crate))
 
@@ -311,6 +317,131 @@ makeCodecImpls md d@Data{..} = do
       tC         = TSimple "C"
   pure (foreignItems, allItems)
 
+makeTransports :: GuguguK r m => Module -> m [Item]
+makeTransports md@Module{..} = do
+  GuguguRustOption{..} <- asks toGuguguRustOption
+  let codecV n   = codecId <> (n :| [])
+      codecId    = "crate" :| (runtimeMod <> ["codec"])
+      transV n   = transId <> (n :| [])
+      transId    = "crate" :| (runtimeMod <> ["transport"])
+  transportComps <- for moduleFuncs $ \fn@Func{..} -> do
+    fd <- makeType funcDomain
+    fcd <- case funcCodomain of
+      GApp{ typeCon = "IO", typeParams = [v] } -> makeType v
+      _                                        ->
+        throwError "Function codomain must be a type like IO a"
+    funcCode <- mkFuncCode fn
+    funcValue <- mkFuncValue fn
+    -- TODO: make it configurable
+    funcRTypeName <- pure $
+      let t' = case T.uncons funcName of
+            Just (c, t'') -> T.cons (toUpper c) t''
+            Nothing       -> funcName
+      in t' <> "Future"
+    let traitItems  = [funcRType, funcSig]
+        serverAlt   = (PSimple funcValue, ESimple "Some" `ECall` [serverExp])
+        funcRType   = TT TraitType
+          { ttName   = funcRTypeName
+          , ttBounds = rTypeK
+          , ttBody   = Nothing
+          }
+        funcSig     = TF Function
+          { fName    = funcCode
+          , fTParams = []
+          , fParams  = [fpRefSelf, fpSimple "a" fd, fpSimple "i" $ TSimple "I"]
+          , fRType   = TPath $ "Self" :| [funcRTypeName]
+          , fWhere   = []
+          , fBody    = Nothing
+          }
+        serverExp   = EClosure ["a", "ch", "ca", "cb", "ra", "i"] $
+          EMethod (ESimple "ch") "run"
+            [ ESimple "ca"
+            , ESimple "cb"
+            , EClosure ["v", "i1"] $ EMethod (ESimple "a") funcCode
+                [ ESimple "v"
+                , ESimple "i1"
+                ]
+            , ESimple "ra"
+            , ESimple "i"
+            ]
+        rTypeK      =
+          [ TParam (TPath ("std" :| ["future", "Future"])) []
+              [("Output", rOutput)]
+          , TSimple "Send"
+          ]
+        rOutput     = TSimple "Result" `tParam`
+          [TTuple [TSimple "O", fcd], TSimple "E"]
+    pure (traitItems, serverAlt)
+  traitName <- mkModuleType md "Module"
+  moduleValue <- mkModuleValue md
+  let (traitItems, serverAlts) = unzip transportComps
+  let allItems   = [traitItem]
+                <> [serverAsk | withServer]
+                <> [nsDec]
+      traitItem  = noAttr $ ITrait Trait
+        { tName   = traitName
+        , tTParams = ["E", "I", "O"]
+        , tItems  = concat traitItems
+        }
+      serverAsk  = noAttr $ IFunction Function
+        { fName    = "ask_transport"
+        , fTParams = ["A", "CA", "CB", "CH", "E", "I", "O", "EA", "EB", "RA", "RB"]
+        , fParams  =
+            [ fpSimple "namespace" nsType
+            , fpSimple "name" $ TRef $ TSimple "str"
+            ]
+        , fRType   = TSimple "Option" `tApp`
+            TFn
+              [ tArced $ TSimple "A"
+              , TRef $ TSimple "CH"
+              , tArced $ TSimple "CA"
+              , tArced $ TSimple "CB"
+              , TSimple "RA"
+              , TSimple "I"
+              ]
+              (TPath ("CH" :| ["OutputFuture"]))
+        , fWhere   =
+            [ ( TSimple "A"
+              , tParam (TSimple traitName)
+                    [TSimple "E", TSimple "I", TSimple "O"]
+                  : syncBounds
+              )
+            , ( TSimple "CA"
+              , TParam (TPath (codecV "DecoderImpl")) []
+                    [("Error", TSimple "EA"), ("Repr", TSimple "RA")]
+                  : syncBounds
+              )
+            , ( TSimple "CB"
+              , TParam (TPath (codecV "EncoderImpl")) []
+                    [("Error", TSimple "EB"), ("Repr", TSimple "RB")]
+                  : syncBounds
+              )
+            , ( TSimple "CH"
+              , [ tParam (TPath (transV "ServerCodecHandler")) $
+                    fmap TSimple ["E", "I", "O", "RA", "RB", "EA", "EB"]
+                ]
+              )
+            ]
+        , fBody    = Just $
+            EMatch (EBinary (ESimple "namespace") "==" (ESimple "NAMESPACE"))
+              [ ( PSimple "true"
+                , EMatch (ESimple "name") $
+                       serverAlts
+                    <> [(PSimple "_", ESimple "None")]
+                )
+              , (PSimple "false", ESimple "None")
+              ]
+        }
+      nsDec      = noAttr $ IConstantItem ConstantItem
+        { ciName = "NAMESPACE"
+        , ciType = nsType
+        , ciBody = moduleValue
+        }
+      nsType     = TRef $ TSlice $ TRef $ TSimple "str"
+      tArced     = tApp $ TPath $ "std" :| ["sync", "Arc"]
+      syncBounds = [TSimple "Send", TSimple "Sync", TSimple "'static"]
+  pure allItems
+
 
 makeType :: GuguguK r m => GType -> m Type
 makeType GApp{..} = do
@@ -367,6 +498,22 @@ mkModuleCode Module{..} = do
   withTransformer transModuleCode $ \f ->
     NonEmpty.fromList $ modulePrefix <> [f moduleName]
 
+mkModuleValue :: GuguguK r m => Module -> m Expression
+mkModuleValue Module{..} = withTransformer transModuleValue $ \f ->
+  EBorrow $ EArray [ESimple $ unsafeQuote $ f moduleName]
+
+mkModuleType :: GuguguK r m => Module -> Text -> m Text
+mkModuleType Module{..} suffix = withTransformer transModuleType $ \f ->
+  f $ moduleName <> suffix
+
+mkFuncCode :: GuguguK r m => Func -> m Text
+mkFuncCode Func{..} = withTransformer transFuncCode $ \f ->
+  f funcName
+
+mkFuncValue :: GuguguK r m => Func -> m Text
+mkFuncValue Func{..} = withTransformer transFuncValue $ \f ->
+  unsafeQuote $ f funcName
+
 mkTypeCode :: GuguguK r m => Data -> m Text
 mkTypeCode Data{..} = withTransformer transTypeCode $ \f ->
   f dataName
@@ -421,6 +568,11 @@ fpSimple p t = FunctionParam
 
 tParam :: Type -> [Type] -> Type
 tParam t tps = TParam t tps []
+
+tApp :: Type -> Type -> Type
+tApp t tp = tParam t [tp]
+
+infixr 1 `tApp`
 
 noAttr :: VisItem -> Item
 noAttr = Item []

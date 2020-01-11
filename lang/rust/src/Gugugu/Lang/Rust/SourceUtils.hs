@@ -23,6 +23,7 @@ module Gugugu.Lang.Rust.SourceUtils
   , Struct(..)
   , StructField(..)
   , Enumeration(..)
+  , ConstantItem(..)
   , Trait(..)
   , TraitItem(..)
   , TraitType(..)
@@ -115,9 +116,11 @@ VisItem:
  -}
 data VisItem
   = IModule RsModule
+  | IFunction Function
   | ITypeAlias TypeAlias
   | IStruct Struct
   | IEnumeration Enumeration
+  | IConstantItem ConstantItem
   | ITrait Trait
   | ITraitImpl TraitImpl
   deriving Show
@@ -329,6 +332,22 @@ data Enumeration
   = Enumeration
     { eName  :: Identifier
     , eItems :: [Identifier]
+    }
+  deriving Show
+
+{-|
+https://doc.rust-lang.org/reference/items/constant-items.html
+
+@
+ConstantItem:
+  const ( IDENTIFIER | _ ) : Type = Expression ;
+@
+ -}
+data ConstantItem
+  = ConstantItem
+    { ciName :: Identifier
+    , ciType :: Type
+    , ciBody :: Expression
     }
   deriving Show
 
@@ -712,6 +731,33 @@ ErrorPropagationExpression:
    -}
   | EPropagate Expression
   {-|
+https://doc.rust-lang.org/reference/expressions/operator-expr.html#comparison-operators
+
+@
+ComparisonExpression:
+    Expression == Expression
+  | Expression != Expression
+  | Expression > Expression
+  | Expression < Expression
+  | Expression >= Expression
+  | Expression <= Expression
+@
+   -}
+  | EBinary Expression Text Expression
+  {-|
+https://doc.rust-lang.org/reference/expressions/array-expr.html
+
+@
+ArrayExpression:
+  [ InnerAttribute* ArrayElements? ]
+
+ArrayElements:
+    Expression ( , Expression )* ,?
+  | Expression ; Expression
+@
+   -}
+  | EArray [Expression]
+  {-|
 https://doc.rust-lang.org/reference/expressions/tuple-expr.html
 
 @
@@ -978,6 +1024,40 @@ ReferenceType:
 @
    -}
   | TRef Type
+  {-|
+https://doc.rust-lang.org/reference/types/slice.html
+
+@
+SliceType:
+  [ Type ]
+@
+   -}
+  | TSlice Type
+  {-|
+https://doc.rust-lang.org/reference/types/function-pointer.html
+
+@
+BareFunctionType:
+  ForLifetimes? FunctionQualifiers fn
+    ( FunctionParametersMaybeNamedVariadic? ) BareFunctionReturnType?
+
+BareFunctionReturnType:
+  -> TypeNoBounds
+
+FunctionParametersMaybeNamedVariadic:
+  MaybeNamedFunctionParameters | MaybeNamedFunctionParametersVariadic
+
+MaybeNamedFunctionParameters:
+  MaybeNamedParam ( , MaybeNamedParam )* ,?
+
+MaybeNamedParam:
+  OuterAttribute* ( ( IDENTIFIER | _ ) : )? Type
+
+MaybeNamedFunctionParametersVariadic:
+  ( MaybeNamedParam , )* MaybeNamedParam , OuterAttribute* ...
+@
+   -}
+  | TFn [Type] Type
   deriving Show
 
 {-|
@@ -1053,12 +1133,14 @@ instance SrcComp Item where
 
 instance SrcComp VisItem where
   writeSrcComp v = case v of
-    IModule i      -> writePubItem i
-    ITypeAlias i   -> writePubItem i
-    IStruct i      -> writePubItem i
-    IEnumeration i -> writePubItem i
-    ITrait i       -> writePubItem i
-    ITraitImpl i   -> withNewLine $ writeSrcComp i
+    IModule i       -> writePubItem i
+    IFunction i     -> writePubItem i
+    ITypeAlias i    -> writePubItem i
+    IStruct i       -> writePubItem i
+    IEnumeration i  -> writePubItem i
+    IConstantItem i -> withNewLine $ writeSrcComp i
+    ITrait i        -> writePubItem i
+    ITraitImpl i    -> withNewLine $ writeSrcComp i
 
 instance SrcComp RsModule where
   writeSrcComp RsModule{..} = do
@@ -1144,6 +1226,16 @@ instance SrcComp Enumeration where
         doIndent
         writeText "}"
 
+instance SrcComp ConstantItem where
+  writeSrcComp ConstantItem{..} = do
+    writeText "const "
+    writeText ciName
+    writeText ": "
+    writeSrcComp ciType
+    writeText " = "
+    writeSrcComp ciBody
+    writeText ";"
+
 instance SrcComp Trait where
   writeSrcComp Trait{..} = do
     writeText "trait "
@@ -1215,19 +1307,29 @@ instance SrcComp Statement where
 
 instance SrcComp Expression where
   writeSrcComp v = case v of
-    ESimple t      -> writeText t
-    EPath ps       -> forWith_ "::" ps writeText
-    EBorrow e      -> do
+    ESimple t        -> writeText t
+    EPath ps         -> forWith_ "::" ps writeText
+    EBorrow e        -> do
       writeText "&"
       writeSrcComp e
-    EPropagate e   -> do
+    EPropagate e     -> do
       writeSrcComp e
       writeText "?"
-    ETuple es      -> do
+    EBinary e1 op e2 -> do
+      writeSrcComp e1
+      writeText " "
+      writeText op
+      writeText " "
+      writeSrcComp e2
+    EArray es        -> do
+      writeText "["
+      forWithComma_ es writeSrcComp
+      writeText "]"
+    ETuple es        -> do
       writeText "("
       forWithComma_ es writeSrcComp
       writeText ")"
-    EStruct e fs   -> do
+    EStruct e fs     -> do
       writeSrcComp e
       writeText " {\n"
       indentBy 2 $ for_ fs $ \(n, v') -> withNewLine $ do
@@ -1237,36 +1339,36 @@ instance SrcComp Expression where
         writeText ","
       doIndent
       writeText "}"
-    ECall e ps     -> do
+    ECall e ps       -> do
       writeSrcComp e
       writeText "("
       forWithComma_ ps writeSrcComp
       writeText ")"
-    EMethod e n ps -> do
+    EMethod e n ps   -> do
       writeSrcComp e
       writeText "."
       writeText n
       writeText "("
       forWithComma_ ps writeSrcComp
       writeText ")"
-    EField e n     -> do
+    EField e n       -> do
       writeSrcComp e
       writeText "."
       writeText n
-    EClosure ps e  -> do
+    EClosure ps e    -> do
       writeText "move "
       writeText "|"
       forWithComma_ ps writeText
       writeText "| "
       writeSrcComp e
-    EBlock ss e    -> do
+    EBlock ss e      -> do
       writeText "{\n"
       indentBy 2 $ do
         traverse_ (withNewLine . writeSrcComp) ss
         withNewLine $ writeSrcComp e
       doIndent
       writeText "}"
-    EMatch e alts  -> do
+    EMatch e alts    -> do
       writeText "match "
       writeSrcComp e
       writeText " {\n"
@@ -1310,3 +1412,12 @@ instance SrcComp Type where
     TRef t          -> do
       writeText "&"
       writeSrcComp t
+    TSlice t        -> do
+      writeText "["
+      writeSrcComp t
+      writeText "]"
+    TFn ps r        -> do
+      writeText "fn("
+      forWithComma_ ps writeSrcComp
+      writeText ") -> "
+      writeSrcComp r

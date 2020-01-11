@@ -43,6 +43,10 @@ guguguRustMain = runExceptIO $ do
         runtimePath name              = foldr (\x z -> T.unpack x </> z)
                                         (name <.> "rs") (runtimeMod opts)
     writeRuntimeFile "codec" codecFile
+    let transFile = f withServer serverFile
+                  $ transportCommonFile
+          where f p x z = if p opts then z <> "\n\n" <> x else z
+    writeRuntimeFile "transport" transFile
   for_ (Map.toList fs) $ \(p, sf) ->
     writeSrcCompToFile (outputDir </> p) sf
 
@@ -71,7 +75,7 @@ optParser = do
           <> "use comma to separate multiples, "
           <> "e.g. Debug,PartialEq"
     ]
-  withCodec <- pWithCodec
+  ~(withCodec, withServer, withClient) <- pWithCodecServerClient
   nameTransformers <- guguguNameTransformers GuguguNameTransformers
     { transModuleCode  = ToLower
     , transModuleValue = ToSnake
@@ -97,3 +101,9 @@ optParser = do
 
 codecFile :: ByteString
 codecFile = $(embedFile "runtime/codec.rs")
+
+transportCommonFile :: ByteString
+transportCommonFile = $(embedFile "runtime/transport.rs")
+
+serverFile :: ByteString
+serverFile = $(embedFile "runtime/server.rs")

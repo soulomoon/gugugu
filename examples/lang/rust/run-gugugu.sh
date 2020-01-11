@@ -20,4 +20,5 @@ gugugu-rust \
 	--module-prefix=definitions \
 	--derives=Debug,PartialEq \
 	--with-codec \
+	--with-server \
 	;
