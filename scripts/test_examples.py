@@ -33,6 +33,8 @@ def main():
                         or client.name == args.only \
                         or server.name == args.only:
                     server_suite.addTest(test_case)
+            if server_suite.is_empty:
+                continue
             protocol_suite.addTest(server_suite)
         suite.addTest(protocol_suite)
 
@@ -209,6 +211,11 @@ class TestSuiteWithServer(TestSuite):
     def __init__(self, server: Server, tests=()):
         self._server = server
         super().__init__(tests)
+        self.is_empty = True
+
+    def addTest(self, test):
+        self.is_empty = False
+        super().addTest(test)
 
     def run(self, result: TestResult, debug=False):
         name = f"{self._server.protocol:<10} : {self._server.name:<20} server"
