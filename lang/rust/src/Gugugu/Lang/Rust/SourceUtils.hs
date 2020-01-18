@@ -970,6 +970,18 @@ TypeNoBounds:
 data Type
   = TSimple Identifier
   {-|
+https://doc.rust-lang.org/reference/types/trait-object.html
+
+@
+TraitObjectType:
+  dyn? TypeParamBounds
+
+TraitObjectTypeOneBound:
+  dyn? TraitBound
+@
+   -}
+  | TDyn TypeParamBounds
+  {-|
 https://doc.rust-lang.org/reference/paths.html#paths-in-types
 
 @
@@ -1394,6 +1406,9 @@ instance SrcComp Pattern where
 instance SrcComp Type where
   writeSrcComp v = case v of
     TSimple t       -> writeText t
+    TDyn bs         -> do
+      writeText "dyn "
+      writeTypeParamBounds bs
     TPath ps        -> forWith_ "::" ps writeText
     TParam t ps nps -> do
       writeSrcComp t

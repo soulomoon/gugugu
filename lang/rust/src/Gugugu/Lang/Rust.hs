@@ -340,6 +340,7 @@ makeTransports md@Module{..} = do
       in t' <> "Future"
     let traitItems  = [funcRType, funcSig]
         serverAlt   = (PSimple funcValue, ESimple "Some" `ECall` [serverExp])
+        clientItems = [clientRType, clientFunc]
         funcRType   = TT TraitType
           { ttName   = funcRTypeName
           , ttBounds = rTypeK
@@ -364,6 +365,30 @@ makeTransports md@Module{..} = do
             , ESimple "ra"
             , ESimple "i"
             ]
+        clientRType = TT TraitType
+          { ttName        = funcRTypeName
+          , ttBounds = []
+          , ttBody         = Just $
+              TPath ("std" :| ["pin", "Pin"]) `tApp`
+                TSimple "Box" `tApp`
+                TDyn rTypeK
+          }
+        clientFunc  = TF Function
+          { fName    = funcCode
+          , fTParams = []
+          , fParams  = [fpRefSelf, fpSimple "a" fd, fpSimple "i" $ TSimple "I"]
+          , fRType   = TPath $ "Self" :| [funcRTypeName]
+          , fWhere  = []
+          , fBody    = Just $
+              EMethod (ESimple "self" `EField` "transport") "send"
+                [ ESimple "NAMESPACE"
+                , ESimple funcValue
+                , ESimple "a"
+                , ESimple "i"
+                , EMethod (ESimple "self" `EField` "encoder_impl") "clone" []
+                , EMethod (ESimple "self" `EField` "decoder_impl") "clone" []
+                ]
+          }
         rTypeK      =
           [ TParam (TPath ("std" :| ["future", "Future"])) []
               [("Output", rOutput)]
@@ -371,13 +396,14 @@ makeTransports md@Module{..} = do
           ]
         rOutput     = TSimple "Result" `tParam`
           [TTuple [TSimple "O", fcd], TSimple "E"]
-    pure (traitItems, serverAlt)
+    pure (traitItems, serverAlt, clientItems)
   traitName <- mkModuleType md "Module"
   moduleValue <- mkModuleValue md
-  let (traitItems, serverAlts) = unzip transportComps
+  let (traitItems, serverAlts, clientItems) = unzip3 transportComps
   let allItems   = [traitItem]
                 <> [serverAsk | withServer]
                 <> [nsDec]
+                <> [clientImpl | withClient]
       traitItem  = noAttr $ ITrait Trait
         { tName   = traitName
         , tTParams = ["E", "I", "O"]
@@ -431,6 +457,29 @@ makeTransports md@Module{..} = do
                 )
               , (PSimple "false", ESimple "None")
               ]
+        }
+      clientImpl = noAttr $ ITraitImpl TraitImpl
+        { tiTrait   = tParam (TSimple traitName) $ fmap TSimple ["E", "I", "O"]
+        , tiTParams = ["T", "CA", "CB", "E", "I", "O"]
+        , tiFor     = tParam (TPath (transV "GuguguClient")) $
+             fmap TSimple ["T", "CA", "CB"]
+        , tiWhere   =
+            [ ( TSimple "T"
+              , [ tParam (TPath (transV "ClientTransport"))
+                    [ TSimple "E"
+                    , TSimple "I"
+                    , TSimple "O"
+                    , TPath ("CA" :| ["Repr"])
+                    , TPath ("CB" :| ["Repr"])
+                    , TPath ("CA" :| ["Error"])
+                    , TPath ("CB" :| ["Error"])
+                    ]
+                ]
+              )
+            , (TSimple "CA", TPath (codecV "EncoderImpl") : syncBounds)
+            , (TSimple "CB", TPath (codecV "DecoderImpl") : syncBounds)
+            ]
+        , tiItems   = concat clientItems
         }
       nsDec      = noAttr $ IConstantItem ConstantItem
         { ciName = "NAMESPACE"

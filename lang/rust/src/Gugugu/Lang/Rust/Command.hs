@@ -43,7 +43,7 @@ guguguRustMain = runExceptIO $ do
         runtimePath name              = foldr (\x z -> T.unpack x </> z)
                                         (name <.> "rs") (runtimeMod opts)
     writeRuntimeFile "codec" codecFile
-    let transFile = f withServer serverFile
+    let transFile = f withClient clientFile . f withServer serverFile
                   $ transportCommonFile
           where f p x z = if p opts then z <> "\n\n" <> x else z
     writeRuntimeFile "transport" transFile
@@ -107,3 +107,6 @@ transportCommonFile = $(embedFile "runtime/transport.rs")
 
 serverFile :: ByteString
 serverFile = $(embedFile "runtime/server.rs")
+
+clientFile :: ByteString
+clientFile = $(embedFile "runtime/client.rs")

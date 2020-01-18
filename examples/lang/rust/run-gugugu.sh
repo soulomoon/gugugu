@@ -21,4 +21,5 @@ gugugu-rust \
 	--derives=Debug,PartialEq \
 	--with-codec \
 	--with-server \
+	--with-client \
 	;
