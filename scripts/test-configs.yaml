@@ -17,6 +17,9 @@ jsonhttp:
     server:
       command: cargo run --bin gugugu-example-rust-jsonhttp-server
       cwd: examples/lang/rust
+    client:
+      command: cargo run --bin gugugu-example-rust-jsonhttp-client
+      cwd: examples/lang/rust
   scala:
     server:
       command: gradle runJsonHttpServer
