@@ -34,31 +34,31 @@ stages:
             inputs:
               filePath: .azure-pipeline/setup.sh
             displayName: Setup environment
-          - task: CacheBeta@0
+          - task: Cache@2
             inputs:
               key: stack-bin | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)"
               path: $(stack_root)/bin
               cacheHitVar: CACHE_RESTORED_STACK_BIN
             displayName: Cache stack bin
-          - task: CacheBeta@0
+          - task: Cache@2
             inputs:
               key: stack-pantry | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml.lock
               path: $(stack_root)/pantry
               cacheHitVar: CACHE_RESTORED_STACK_PANTRY
             displayName: Cache stack pantry
-          - task: CacheBeta@0
+          - task: Cache@2
             inputs:
               key: stack-programs | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | "$(stack_resolver)"
               path: $(stack_root)/programs
               cacheHitVar: CACHE_RESTORED_STACK_PROGRAMS
             displayName: Cache stack programs
-          - task: CacheBeta@0
+          - task: Cache@2
             inputs:
               key: stack-snapshots | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml* | **/package.yaml
               path: $(stack_root)/snapshots
               cacheHitVar: CACHE_RESTORED_STACK_SNAPSHOTS
             displayName: Cache dependencies
-          - task: CacheBeta@0
+          - task: Cache@2
             inputs:
               key: stack-setup-exe-cache | $(Agent.OS) | $(Agent.OSArchitecture) | "$(stack_version)" | stack.yaml* | **/package.yaml | **/Setup.hs
               path: $(stack_root)/setup-exe-cache
