@@ -57,6 +57,7 @@ Targets
 
    lang/haskell
    lang/python
+   lang/rust
    lang/scala
    lang/typescript
 
