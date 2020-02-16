@@ -32,6 +32,10 @@ stages:
         steps:
           - task: Bash@3
             inputs:
+              script: chmod +x .azure-pipeline/*.sh
+            displayName: Make azure pipeline happy
+          - task: Bash@3
+            inputs:
               filePath: .azure-pipeline/setup.sh
             displayName: Setup environment
           - task: CacheBeta@0
