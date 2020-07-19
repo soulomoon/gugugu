@@ -5,7 +5,8 @@ class Decoding a where
   decode :: (DecoderImpl c r g f, Applicative f) => c ->      f a
 
 
-class ForeignEncodersImpl c f => EncoderImpl c r g f | c -> r g f where
+class ForeignEncodersImpl c f
+    => EncoderImpl c r (g :: * -> *) f | c -> r g f where
   encodeValue :: Encoding a => c -> a -> g r
 
   encodeRecord      ::               Int -> (c -> a -> f ()) -> c -> a -> f ()
@@ -22,7 +23,8 @@ class ForeignEncodersImpl c f => EncoderImpl c r g f | c -> r g f where
   encodeDouble :: c -> Double         -> f ()
   encodeString :: c -> Data.Text.Text -> f ()
 
-class ForeignDecodersImpl c f => DecoderImpl c r g f | c -> r g f where
+class ForeignDecodersImpl c f
+    => DecoderImpl c r (g :: * -> *) f | c -> r g f where
   decodeValue :: Decoding a => c -> r -> g a
 
   decodeRecord      ::               Int -> (c -> f a)     -> c -> f a
