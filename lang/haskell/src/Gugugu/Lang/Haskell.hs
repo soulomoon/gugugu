@@ -101,7 +101,10 @@ makeModules opts@GuguguHaskellOption{..} modules = do
         <> [(codecPath, codecModule) | withCodec]
         <> [(transPath, transModule) | withServer || withClient]
       codecModule  = HaskellModule
-        { hmExts    = ["FunctionalDependencies", "MultiParamTypeClasses"]
+        { hmExts    = [ "FunctionalDependencies"
+                      , "KindSignatures"
+                      , "MultiParamTypeClasses"
+                      ]
         , hmId      = codecModId
         , hmImports = Set.toAscList $
                unsafeImportMods' ["Data.Int", "Data.Text", "Data.Vector"]
@@ -183,7 +186,10 @@ makeModule md@Module{..} = do
         { hmExts    = List.sort $
                ["OverloadedStrings" | withCodec]
             <> ( if hasTrans
-                  then ["OverloadedLists", "MultiParamTypeClasses"]
+                  then [ "OverloadedLists"
+                       , "MultiParamTypeClasses"
+                       , "RankNTypes"
+                       ]
                   else []
                )
             <> ["FlexibleInstances" | withClient && hasTrans]
